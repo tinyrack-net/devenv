@@ -78,18 +78,24 @@ func TestExecTimeoutKillsGroup(t *testing.T) {
 	}
 }
 
-// Children left behind by a finished command are cleaned up too.
-func TestExecReapsLeftovers(t *testing.T) {
+// Background children of a finished command keep running (exec "app &"),
+// and exec returns promptly even though they hold the output pipes.
+func TestExecKeepsBackgroundChildren(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "pid")
-	if _, err := Exec(context.Background(), ExecRequest{Command: "sleep 300 & echo $! > " + marker}); err != nil {
+	start := time.Now()
+	r, err := Exec(context.Background(), ExecRequest{Command: "sleep 300 & echo $! > " + marker + "; echo started"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if r.Stdout != "started\n" || time.Since(start) > 5*time.Second {
+		t.Errorf("%+v after %v", r, time.Since(start))
 	}
 	b, _ := os.ReadFile(marker)
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	time.Sleep(200 * time.Millisecond)
-	if pid > 0 && exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil {
-		t.Errorf("leftover %d still running", pid)
+	if pid <= 0 || exec.Command("kill", "-0", strconv.Itoa(pid)).Run() != nil {
+		t.Fatalf("background child %d should still run", pid)
 	}
+	exec.Command("kill", strconv.Itoa(pid)).Run()
 }
 
 func writeTree(t *testing.T, root string, files map[string]string) {

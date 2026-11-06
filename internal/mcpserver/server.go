@@ -43,6 +43,7 @@ type Server struct {
 
 	execLimiter *limiter
 	poolOnce    sync.Once
+	desk        desktops
 }
 
 func (s *Server) pool() *sshclient.Pool {

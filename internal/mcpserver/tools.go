@@ -301,6 +301,7 @@ func (s *Server) register(srv *mcp.Server) {
 	s.registerSearch(srv)
 	s.registerProcesses(srv)
 	s.registerDiagnostics(srv)
+	s.registerDesktop(srv)
 }
 
 // getEnv reads an environment, tolerating informer cache lag right after

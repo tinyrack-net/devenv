@@ -153,8 +153,8 @@ func Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	stdout, stderr := &Capped{Max: maxOut}, &Capped{Max: maxOut}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Stdin = strings.NewReader(req.Stdin)
-	// Bound the wait for output pipes held open by leftover children.
-	cmd.WaitDelay = 2 * time.Second
+	// Bound the wait for output pipes held open by background children.
+	cmd.WaitDelay = 500 * time.Millisecond
 
 	oomBefore := oomKills()
 	start := time.Now()
@@ -162,19 +162,14 @@ func Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 		return ExecResult{}, err
 	}
 	pid := cmd.Process.Pid
-	// exited fires when the shell exits (waitid with WNOWAIT keeps it
-	// reapable). Leftover children in its group are then killed so their
-	// copies of stdout/stderr close, and cmd.Wait can drain the output.
-	exited := make(chan struct{})
+	// Wait for the shell (waitid with WNOWAIT keeps it reapable), then for
+	// its output. Children it started in the background ("app &", nohup)
+	// are left running: they may hold stdout/stderr open, and WaitDelay
+	// stops waiting for those pipes shortly after the shell exits.
+	done := make(chan error, 1)
 	go func() {
 		var info unixSiginfo
 		_ = waitNoReap(pid, &info)
-		killGroup(pid, syscall.SIGKILL)
-		close(exited)
-	}()
-	done := make(chan error, 1)
-	go func() {
-		<-exited
 		done <- cmd.Wait()
 	}()
 
