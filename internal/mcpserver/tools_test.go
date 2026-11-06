@@ -1,9 +1,18 @@
 package mcpserver
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/png"
+
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"strconv"
 	"strings"
@@ -227,5 +236,65 @@ func TestProcesses(t *testing.T) {
 	}
 	if isErr, _ := h.call("start_process", map[string]any{"name": "w", "id": "Bad Id", "command": "true"}, nil); !isErr {
 		t.Error("invalid id accepted")
+	}
+}
+
+func TestBinaryAndImages(t *testing.T) {
+	h := newEnvHarness(t)
+
+	// base64 round trip of arbitrary bytes.
+	raw := []byte{0, 1, 2, 250, 255, '\n'}
+	var w writeOut
+	if isErr, text := h.call("write_file", map[string]any{"name": "w", "path": "blob.bin", "content": base64.StdEncoding.EncodeToString(raw), "encoding": "base64"}, &w); isErr {
+		t.Fatalf("write base64: %s", text)
+	}
+	got, _ := os.ReadFile(filepath.Join(homeDir, "blob.bin"))
+	if !bytes.Equal(got, raw) {
+		t.Errorf("written = %v", got)
+	}
+	var r readOut
+	h.call("read_file", map[string]any{"name": "w", "path": "blob.bin", "encoding": "base64"}, &r)
+	if dec, _ := base64.StdEncoding.DecodeString(r.Base64); !bytes.Equal(dec, raw) {
+		t.Errorf("read base64 = %q", r.Base64)
+	}
+	if isErr, text := h.call("read_file", map[string]any{"name": "w", "path": "blob.bin"}, nil); !isErr || !strings.Contains(text, "encoding base64") {
+		t.Errorf("binary text read: %v %s", isErr, text)
+	}
+	if isErr, _ := h.call("write_file", map[string]any{"name": "w", "path": "x", "content": "!!!", "encoding": "base64"}, nil); !isErr {
+		t.Error("invalid base64 accepted")
+	}
+
+	// A large PNG comes back as a scaled image.
+	img := image.NewRGBA(image.Rect(0, 0, 3000, 1000))
+	for x := 0; x < 3000; x++ {
+		for y := 0; y < 1000; y++ {
+			img.Set(x, y, color.RGBA{uint8(x), uint8(y), 128, 255})
+		}
+	}
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	os.WriteFile(filepath.Join(homeDir, "shot.png"), buf.Bytes(), 0o644)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := h.session.CallTool(ctx, &mcp.CallToolParams{Name: "read_file", Arguments: map[string]any{"name": "w", "path": "shot.png"}})
+	if err != nil || res.IsError {
+		t.Fatalf("read image: %v %+v", err, res)
+	}
+	var ic *mcp.ImageContent
+	for _, c := range res.Content {
+		if v, ok := c.(*mcp.ImageContent); ok {
+			ic = v
+		}
+	}
+	if ic == nil {
+		t.Fatalf("no image content: %+v", res.Content)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(ic.Data))
+	if err != nil || cfg.Width != maxImageSide || cfg.Height != maxImageSide/3 {
+		t.Errorf("scaled image %dx%d err %v (mime %s)", cfg.Width, cfg.Height, err, ic.MIMEType)
+	}
+	if len(ic.Data) > maxImageBytes {
+		t.Errorf("image %d bytes", len(ic.Data))
 	}
 }

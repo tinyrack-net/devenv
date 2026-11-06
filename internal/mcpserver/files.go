@@ -3,8 +3,10 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"sort"
@@ -26,6 +28,7 @@ const (
 	maxReadOutput  = 256 << 10
 	defaultReadMax = 2000
 	maxWriteBytes  = 5 << 20
+	maxBinaryBytes = 5 << 20
 	maxListEntries = 1000
 )
 
@@ -101,14 +104,19 @@ func trimPartialRune(b []byte) []byte {
 // ---- read_file
 
 type readIn struct {
-	Name   string `json:"name" jsonschema:"environment name"`
-	Path   string `json:"path" jsonschema:"file path; relative paths are relative to /home/dev"`
-	Offset int    `json:"offset,omitempty" jsonschema:"first line to return, 1-based (default 1)"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of lines (default 2000)"`
+	Name     string `json:"name" jsonschema:"environment name"`
+	Path     string `json:"path" jsonschema:"file path; relative paths are relative to /home/dev"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"first line to return, 1-based (default 1)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"maximum number of lines (default 2000)"`
+	Encoding string `json:"encoding,omitempty" jsonschema:"text (default) or base64 to read any file (up to 5MB) as base64"`
 }
 
 type readOut struct {
 	Path       string `json:"path"`
+	Base64     string `json:"base64,omitempty" jsonschema:"file content when encoding is base64"`
+	MIMEType   string `json:"mime_type,omitempty" jsonschema:"detected type for images and base64 reads"`
+	Width      int    `json:"width,omitempty" jsonschema:"image width in pixels (original)"`
+	Height     int    `json:"height,omitempty" jsonschema:"image height in pixels (original)"`
 	Content    string `json:"content" jsonschema:"requested lines, prefixed with line numbers and a tab"`
 	StartLine  int    `json:"start_line"`
 	EndLine    int    `json:"end_line"`
@@ -147,8 +155,33 @@ func (s *Server) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readIn
 	if err != nil {
 		return nil, readOut{}, err
 	}
+	switch {
+	case in.Encoding == "base64":
+		if len(data) > maxBinaryBytes {
+			return nil, readOut{}, errorf("%s is %d bytes; base64 reads are limited to %d bytes", p, len(data), maxBinaryBytes)
+		}
+		return nil, readOut{Path: p, SizeBytes: size, MIMEType: http.DetectContentType(data), Base64: base64.StdEncoding.EncodeToString(data)}, nil
+	case in.Encoding != "" && in.Encoding != "text":
+		return nil, readOut{}, errorf("encoding must be text or base64")
+	}
+	// Images are returned as image content the model can see.
+	if mime := imageMIME(data); mime != "" {
+		img, outMIME, w, h, err := prepareImage(data, mime)
+		if err != nil {
+			return nil, readOut{}, errorf("%s: decode image: %v", p, err)
+		}
+		out := readOut{Path: p, SizeBytes: size, MIMEType: mime, Width: w, Height: h}
+		note := fmt.Sprintf("%s: %s image, %dx%d, %d bytes", p, mime, w, h, size)
+		if outMIME != mime || len(img) != len(data) {
+			note += " (scaled down for viewing)"
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{
+			&mcp.ImageContent{Data: img, MIMEType: outMIME},
+			&mcp.TextContent{Text: note},
+		}}, out, nil
+	}
 	if isBinary(data) {
-		return nil, readOut{}, errorf("%s looks like a binary file (%d bytes); inspect it with exec (e.g. file, xxd | head)", p, size)
+		return nil, readOut{}, errorf("%s looks like a binary file (%d bytes, %s); read it with encoding base64 or inspect it with exec", p, size, http.DetectContentType(data))
 	}
 
 	text := string(data)
@@ -194,9 +227,10 @@ func (s *Server) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readIn
 // ---- write_file
 
 type writeIn struct {
-	Name    string `json:"name" jsonschema:"environment name"`
-	Path    string `json:"path" jsonschema:"file path; relative paths are relative to /home/dev. Parent directories are created"`
-	Content string `json:"content" jsonschema:"complete new file content"`
+	Name     string `json:"name" jsonschema:"environment name"`
+	Path     string `json:"path" jsonschema:"file path; relative paths are relative to /home/dev. Parent directories are created"`
+	Content  string `json:"content" jsonschema:"complete new file content"`
+	Encoding string `json:"encoding,omitempty" jsonschema:"text (default) or base64 when content is base64 encoded binary data"`
 }
 
 type writeOut struct {
@@ -249,12 +283,23 @@ func (s *Server) writeFile(ctx context.Context, _ *mcp.CallToolRequest, in write
 	if err != nil {
 		return nil, writeOut{}, err
 	}
-	if len(in.Content) > maxWriteBytes {
+	data := []byte(in.Content)
+	switch in.Encoding {
+	case "", "text":
+	case "base64":
+		data, err = base64.StdEncoding.DecodeString(strings.TrimSpace(in.Content))
+		if err != nil {
+			return nil, writeOut{}, errorf("content is not valid base64: %v", err)
+		}
+	default:
+		return nil, writeOut{}, errorf("encoding must be text or base64")
+	}
+	if len(data) > maxWriteBytes {
 		return nil, writeOut{}, errorf("content is larger than %d bytes", maxWriteBytes)
 	}
-	out := writeOut{Path: p, Bytes: len(in.Content)}
+	out := writeOut{Path: p, Bytes: len(data)}
 	err = s.withSFTP(ctx, in.Name, func(c *sftp.Client) error {
-		created, err := writeAtomic(c, p, []byte(in.Content))
+		created, err := writeAtomic(c, p, data)
 		out.Created = created
 		return err
 	})
@@ -512,13 +557,15 @@ func (s *Server) registerFiles(srv *mcp.Server) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "read_file",
-		Description: "Read a text file from an environment. Returns lines prefixed with their line number and a tab (the prefix is not part of the file). " +
-			"Reads up to 2000 lines by default; use offset and limit for large files.",
+		Description: "Read a file from an environment. Text files return lines prefixed with their line number and a tab (the prefix is not part of the file); " +
+			"up to 2000 lines by default, use offset and limit for large files. Images (png, jpeg, gif, webp) are returned as images you can see. " +
+			"Use encoding base64 for other binary files.",
 		Annotations: ro,
 	}, logged("read_file", s.readFile))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "write_file",
-		Description: "Create or completely replace a file in an environment. Parent directories are created. Prefer edit_file for changes to existing files.",
+		Name: "write_file",
+		Description: "Create or completely replace a file in an environment. Parent directories are created. Prefer edit_file for changes to existing files. " +
+			"Use encoding base64 to write binary data.",
 	}, logged("write_file", s.writeFile))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "edit_file",

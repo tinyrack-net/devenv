@@ -310,7 +310,8 @@ func TestToolsListed(t *testing.T) {
 		got[tool.Name] = true
 	}
 	for _, want := range []string{"list_images", "list_classes", "get_capacity", "list_environments", "get_environment",
-		"create_environment", "update_environment", "start_environment", "stop_environment", "delete_environment", "exec"} {
+		"create_environment", "update_environment", "start_environment", "stop_environment", "delete_environment", "restart_environment", "exec",
+		"read_file", "write_file", "edit_file", "list_dir", "search", "find_files", "start_process", "read_process_output", "list_processes", "stop_process"} {
 		if !got[want] {
 			t.Errorf("tool %s missing", want)
 		}

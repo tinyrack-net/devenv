@@ -186,14 +186,17 @@ func (s *Server) register(srv *mcp.Server) {
 			return nil, listEnvsOut{Environments: out}, nil
 		}))
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_environment", Description: "Get the state of an environment.", Annotations: readOnly},
-		logged("get_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, envOut, error) {
-			e, err := s.getEnv(ctx, in.Name)
-			if err != nil {
-				return nil, envOut{}, userErr(err)
-			}
-			return nil, envOut{Environment: s.view(e)}, nil
-		}))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_environment",
+		Description: "Get the state of an environment, with resource usage (memory, /home/dev disk), restarts, the last crash or out-of-memory kill and recent warnings.",
+		Annotations: readOnly,
+	}, logged("get_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, envDetailOut, error) {
+		e, err := s.getEnv(ctx, in.Name)
+		if err != nil {
+			return nil, envDetailOut{}, userErr(err)
+		}
+		return nil, envDetailOut{Environment: s.view(e), Diagnostics: s.diagnostics(ctx, e)}, nil
+	}))
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_environment",
@@ -297,6 +300,7 @@ func (s *Server) register(srv *mcp.Server) {
 	s.registerFiles(srv)
 	s.registerSearch(srv)
 	s.registerProcesses(srv)
+	s.registerDiagnostics(srv)
 }
 
 // getEnv reads an environment, tolerating informer cache lag right after
