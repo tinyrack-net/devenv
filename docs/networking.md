@@ -57,7 +57,7 @@ the console and in `status.ip`.
 
 Requirements on every node:
 
-- the `macvlan` and `dhcp` CNI plugins in the CNI bin directory
+- the `macvlan`, `dhcp` and `sbr` CNI plugins in the CNI bin directory
 - the DHCP daemon running: `dhcp daemon` (e.g. a hostNetwork DaemonSet
   mounting `/run/cni` and the host's `/proc`... see the plugin docs)
 
@@ -71,19 +71,32 @@ spec:
   config: |-
     {
       "cniVersion": "1.0.0",
-      "type": "macvlan",
-      "master": "eth0",
-      "mode": "bridge",
-      "capabilities": { "mac": true },
-      "ipam": {
-        "type": "dhcp",
-        "provide": [
-          { "option": "dhcp-client-identifier", "fromArg": "K8S_POD_NAME" },
-          { "option": "host-name", "fromArg": "K8S_POD_NAME" }
-        ]
-      }
+      "name": "lan-dhcp",
+      "plugins": [
+        {
+          "type": "macvlan",
+          "master": "eth0",
+          "mode": "bridge",
+          "capabilities": { "mac": true },
+          "ipam": {
+            "type": "dhcp",
+            "provide": [
+              { "option": "dhcp-client-identifier", "fromArg": "K8S_POD_NAME" },
+              { "option": "host-name", "fromArg": "K8S_POD_NAME" }
+            ]
+          }
+        },
+        { "type": "sbr" }
+      ]
     }
 ```
+
+**`sbr` is required.** The DHCP lease installs a default route via the LAN
+gateway. Without source-based routing, replies to the devenv server (web
+terminal, desktop, SSH gateway) leave through the secondary interface and the
+connections time out. `sbr` moves the secondary interface's routes into their
+own table used only for traffic from the secondary address, so cluster traffic
+keeps using the pod network and LAN traffic uses the LAN.
 
 To keep the same IP across restarts:
 

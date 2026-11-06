@@ -94,6 +94,9 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	sc, err := s.Dialer.Dial(ctx, name)
 	if err != nil {
+		if !errors.Is(err, sshclient.ErrNotRunning) {
+			log.Error(err, "terminal: connect to environment")
+		}
 		wsSendJSON(ctx, ws, map[string]string{"type": "error", "message": dialError(err)})
 		ws.Close(websocket.StatusNormalClosure, "")
 		return
@@ -217,6 +220,9 @@ func (s *Server) vnc(w http.ResponseWriter, r *http.Request) {
 
 	sc, err := s.Dialer.Dial(ctx, name)
 	if err != nil {
+		if !errors.Is(err, sshclient.ErrNotRunning) {
+			logf.FromContext(ctx).Error(err, "vnc: connect to environment", "environment", name)
+		}
 		ws.Close(websocket.StatusTryAgainLater, truncate(dialError(err), 120))
 		return
 	}
