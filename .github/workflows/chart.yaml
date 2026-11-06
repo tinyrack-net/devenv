@@ -1,0 +1,25 @@
+name: Chart
+
+# Publishes the Helm chart to oci://ghcr.io/<owner>/charts/devenv on tags.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm package charts/devenv --version "$version" --app-version "$version" -d dist
+      - name: Push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push dist/devenv-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"

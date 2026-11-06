@@ -2,7 +2,7 @@
 
 FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /src/web
-RUN corepack enable
+RUN npm i -g pnpm@12.16.1
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
