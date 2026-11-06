@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -91,27 +92,38 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 	if phase == "" {
 		phase = string(devenvv1.PhasePending)
 	}
+	var idle string
+	if e.Spec.IdleTimeout != nil {
+		idle = e.Spec.IdleTimeout.Duration.String()
+	}
+	var last *time.Time
+	if e.Status.LastActivityTime != nil {
+		t := e.Status.LastActivityTime.Time
+		last = &t
+	}
 	return Environment{
-		Name:        e.Name,
-		Owner:       e.Spec.Owner,
-		Image:       e.Spec.ImageRef,
-		ImageRef:    e.Status.Image,
-		Class:       e.ClassName(),
-		Resources:   toResourcesInput(e.Spec.Resources),
-		Running:     e.IsRunning(),
-		Phase:       phase,
-		Message:     e.Status.Message,
-		Desktop:     e.Status.Desktop,
-		NodeName:    e.Status.NodeName,
-		IP:          e.Status.IP,
-		MAC:         e.Status.MAC,
-		NetworkMode: string(e.Status.NetworkMode),
-		Ports:       toPortInputs(e.Spec.Ports),
-		PasswordSet: e.Spec.PasswordSecretName != "",
-		SSHKeys:     keys,
-		CreatedAt:   e.CreationTimestamp.Time,
-		Deleting:    !e.DeletionTimestamp.IsZero(),
-		ServiceName: e.Status.ServiceName,
+		IdleTimeout:  idle,
+		LastActivity: last,
+		Name:         e.Name,
+		Owner:        e.Spec.Owner,
+		Image:        e.Spec.ImageRef,
+		ImageRef:     e.Status.Image,
+		Class:        e.ClassName(),
+		Resources:    toResourcesInput(e.Spec.Resources),
+		Running:      e.IsRunning(),
+		Phase:        phase,
+		Message:      e.Status.Message,
+		Desktop:      e.Status.Desktop,
+		NodeName:     e.Status.NodeName,
+		IP:           e.Status.IP,
+		MAC:          e.Status.MAC,
+		NetworkMode:  string(e.Status.NetworkMode),
+		Ports:        toPortInputs(e.Spec.Ports),
+		PasswordSet:  e.Spec.PasswordSecretName != "",
+		SSHKeys:      keys,
+		CreatedAt:    e.CreationTimestamp.Time,
+		Deleting:     !e.DeletionTimestamp.IsZero(),
+		ServiceName:  e.Status.ServiceName,
 	}
 }
 

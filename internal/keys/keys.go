@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"strings"
@@ -30,6 +31,7 @@ const (
 	keySession   = "session-key"
 	keyHost      = "gateway-host-key"
 	keyClient    = "client-key"
+	keyMCPToken  = "mcp-token"
 	sessionBytes = 32
 )
 
@@ -38,6 +40,8 @@ type Keys struct {
 	SessionKey []byte
 	HostKey    ssh.Signer
 	ClientKey  ssh.Signer
+	// MCPToken authenticates MCP clients (Authorization: Bearer).
+	MCPToken string
 }
 
 // ClientAuthorizedKey returns the authorized_keys line for the client key.
@@ -71,6 +75,14 @@ func Ensure(ctx context.Context, c client.Client, namespace, name string) (*Keys
 				return nil, err
 			}
 			sec.Data[keySession] = b
+			changed = true
+		}
+		if len(sec.Data[keyMCPToken]) == 0 {
+			b := make([]byte, 32)
+			if _, err := rand.Read(b); err != nil {
+				return nil, err
+			}
+			sec.Data[keyMCPToken] = []byte("dvm_" + base64.RawURLEncoding.EncodeToString(b))
 			changed = true
 		}
 		for _, k := range []string{keyHost, keyClient} {
@@ -110,7 +122,7 @@ func parse(sec *corev1.Secret) (*Keys, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", keyClient, err)
 	}
-	return &Keys{SessionKey: sec.Data[keySession], HostKey: host, ClientKey: cl}, nil
+	return &Keys{SessionKey: sec.Data[keySession], HostKey: host, ClientKey: cl, MCPToken: strings.TrimSpace(string(sec.Data[keyMCPToken]))}, nil
 }
 
 func newEd25519PEM() ([]byte, error) {

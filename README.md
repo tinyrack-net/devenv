@@ -5,6 +5,7 @@ Remote development environments on Kubernetes.
 - Create, start, stop and delete development environments from a web console
 - SSH access, web terminal and VNC desktop
 - Works on any conformant cluster; dedicated IPs via Multus are optional
+- MCP endpoint so AI agents can create environments and run commands
 - Installs with a single Helm chart
 
 > Status: early development. See [docs/PLAN.md](docs/PLAN.md).
@@ -23,7 +24,8 @@ Expose the console with `ingress.*` or `httpRoute.*`, and the SSH gateway with
 environment password (optional, set when creating the environment).
 
 See [docs/images.md](docs/images.md) to build your own environment images and
-[docs/networking.md](docs/networking.md) for dedicated IPs (LoadBalancer, Multus/DHCP).
+[docs/networking.md](docs/networking.md) for dedicated IPs (LoadBalancer, Multus/DHCP), and
+[docs/mcp.md](docs/mcp.md) to connect AI agents.
 
 ## Development
 
@@ -46,3 +48,6 @@ make build-all            # build web console and embed it into bin/devenv
 | `DEVENV_ADMIN_PASSWORD` / `_FILE` | required | Admin password |
 | `DEVENV_KEYS_SECRET` | `devenv-keys` | Secret (in `POD_NAMESPACE`) where the server stores generated session and SSH keys |
 | `DEVENV_SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
+| `DEVENV_MCP_ENABLED` | `true` | Serve `/mcp` |
+| `DEVENV_MCP_DEFAULT_IDLE_TIMEOUT` | `1h` | Idle timeout for environments created through MCP |
+| `DEVENV_MCP_TOKEN` / `_FILE` | generated | MCP bearer token (default: `mcp-token` in the keys Secret) |

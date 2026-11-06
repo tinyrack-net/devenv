@@ -16,3 +16,13 @@ Open the web console:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "devenv.fullname" . }} 8080:{{ .Values.service.port }}
   http://localhost:8080
 {{- end }}
+{{- if .Values.mcp.enabled }}
+
+MCP endpoint for AI agents: <console URL>/mcp (Streamable HTTP)
+{{- if .Values.mcp.existingSecret }}
+  Bearer token: key "token" of Secret {{ .Values.mcp.existingSecret }}
+{{- else }}
+  Bearer token:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "devenv.fullname" . }}-keys -o jsonpath='{.data.mcp-token}' | base64 -d; echo
+{{- end }}
+{{- end }}

@@ -121,6 +121,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.V(1).Info("terminal opened")
+	s.keepActive(ctx, name)
 
 	// Output: stdout+stderr -> websocket.
 	out := make(chan []byte, 16)
@@ -240,6 +241,7 @@ func (s *Server) vnc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer vncConn.Close()
+	s.keepActive(ctx, name)
 
 	nc := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	go func() {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,12 +22,14 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/gateway"
 	"github.com/tinyrack-net/devenv/internal/keys"
+	"github.com/tinyrack-net/devenv/internal/mcpserver"
 	"github.com/tinyrack-net/devenv/internal/server"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 	"github.com/tinyrack-net/devenv/web"
@@ -44,6 +48,15 @@ func init() {
 func envOr(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v, ok := os.LookupEnv(key); ok {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }
@@ -78,6 +91,8 @@ func main() {
 		sshAddr         string
 		sshPublicHost   string
 		sshPublicPort   int
+		mcpEnabled      bool
+		mcpIdleTimeout  time.Duration
 		leaderElect     bool
 		envNamespace    string
 		leaderNamespace string
@@ -93,6 +108,8 @@ func main() {
 	flag.StringVar(&sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
 	flag.StringVar(&sshPublicHost, "ssh-public-host", envOr("DEVENV_SSH_PUBLIC_HOST", ""), "Host users connect to for SSH. Empty uses the web console host.")
 	flag.IntVar(&sshPublicPort, "ssh-public-port", envInt("DEVENV_SSH_PUBLIC_PORT", 2222), "Port users connect to for SSH.")
+	flag.BoolVar(&mcpEnabled, "mcp", envOr("DEVENV_MCP_ENABLED", "true") == "true", "Serve the MCP endpoint at /mcp.")
+	flag.DurationVar(&mcpIdleTimeout, "mcp-default-idle-timeout", envDuration("DEVENV_MCP_DEFAULT_IDLE_TIMEOUT", time.Hour), "Idle timeout applied to environments created through MCP. 0 disables.")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"),
 		"Namespace where environments live.")
@@ -153,6 +170,11 @@ func main() {
 		exit(err, "setup controller")
 	}
 
+	recorder := &activity.Recorder{Client: mgr.GetClient(), Namespace: envNamespace}
+	if err := mgr.Add(recorder); err != nil {
+		exit(err, "add activity recorder")
+	}
+
 	// Environment connections read the environment and its Secret through the
 	// cache (namespaced to the environment namespace).
 	dialer := &sshclient.Dialer{
@@ -161,7 +183,7 @@ func main() {
 		Signer:    serverKeys.ClientKey,
 	}
 	if sshAddr != "" {
-		if err := mgr.Add(&gateway.Gateway{Addr: sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer}); err != nil {
+		if err := mgr.Add(&gateway.Gateway{Addr: sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer, Activity: recorder}); err != nil {
 			exit(err, "add ssh gateway")
 		}
 	}
@@ -199,6 +221,7 @@ func main() {
 			Capacity:  &capacity.Checker{Reader: reader, Namespace: envNamespace},
 			Static:    web.Dist(),
 			Dialer:    dialer,
+			Activity:  recorder,
 			SSH: api.SSHInfo{
 				Enabled:     sshAddr != "",
 				Host:        sshPublicHost,
@@ -211,7 +234,25 @@ func main() {
 		if srv.Static == nil {
 			log.Info("web console assets not embedded; serving API only")
 		}
-		if err := mgr.Add(&server.HTTP{Addr: httpAddr, Handler: srv.Handler()}); err != nil {
+		handler := srv.Handler()
+		if mcpEnabled {
+			token := serverKeys.MCPToken
+			if t, err := readSecret("DEVENV_MCP_TOKEN"); err != nil {
+				exit(err, "read mcp token")
+			} else if t != "" {
+				token = t
+			}
+			mcpSrv := &mcpserver.Server{
+				API: srv, Dialer: dialer, Token: token,
+				DefaultIdleTimeout: mcpIdleTimeout, Activity: recorder, Version: version,
+			}
+			mux := http.NewServeMux()
+			mux.Handle("/mcp", mcpSrv.Handler())
+			mux.Handle("/", handler)
+			handler = mux
+			log.Info("MCP endpoint enabled", "path", "/mcp", "defaultIdleTimeout", mcpIdleTimeout.String())
+		}
+		if err := mgr.Add(&server.HTTP{Addr: httpAddr, Handler: handler}); err != nil {
 			exit(err, "add http server")
 		}
 	}

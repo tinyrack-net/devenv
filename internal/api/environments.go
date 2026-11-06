@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,48 +104,45 @@ func (s *Server) admit(ctx context.Context, env *devenvv1.DevEnvironment, newIma
 	return nil
 }
 
-func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
-	var in CreateEnvironmentRequest
-	if !decode(w, r, &in) {
-		return
-	}
+// CreateOptions are extra settings applied by callers other than the console.
+type CreateOptions struct {
+	// Labels added to the environment.
+	Labels map[string]string
+	// IdleTimeout stops the environment after this much inactivity.
+	IdleTimeout *metav1.Duration
+}
+
+// CreateEnvironment validates and creates an environment owned by user.
+func (s *Server) CreateEnvironment(ctx context.Context, user string, in CreateEnvironmentRequest, opts CreateOptions) (*devenvv1.DevEnvironment, error) {
 	if err := validateName(in.Name); err != nil {
-		fail(w, r, err)
-		return
+		return nil, err
 	}
 	if in.Image == "" {
-		fail(w, r, badRequest("image is required"))
-		return
+		return nil, badRequest("image is required")
 	}
 	res, err := fromResourcesInput(in.Resources)
 	if err != nil {
-		fail(w, r, err)
-		return
+		return nil, err
 	}
 	ports, err := fromPortInputs(in.Ports)
 	if err != nil {
-		fail(w, r, err)
-		return
+		return nil, err
 	}
 	if in.Password != "" {
 		if err := validatePassword(in.Password); err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 	}
-	user := auth.UserFrom(r.Context())
 
 	var keys []string
 	if in.SSHKeys != nil {
 		if keys, err = normalizeKeys(*in.SSHKeys); err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 	} else {
-		stored, err := s.loadKeys(r.Context(), user.Name)
+		stored, err := s.loadKeys(ctx, user)
 		if err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 		for _, k := range stored {
 			keys = append(keys, k.PublicKey)
@@ -152,58 +150,64 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	env := &devenvv1.DevEnvironment{
-		ObjectMeta: metav1.ObjectMeta{Name: in.Name, Namespace: s.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: in.Name, Namespace: s.Namespace, Labels: opts.Labels},
 		Spec: devenvv1.DevEnvironmentSpec{
-			Owner:             user.Name,
+			Owner:             user,
 			ImageRef:          in.Image,
 			ClassName:         in.Class,
 			Resources:         res,
 			Running:           ptr.To(in.Running == nil || *in.Running),
 			SSHAuthorizedKeys: keys,
 			Ports:             ports,
+			IdleTimeout:       opts.IdleTimeout,
 		},
 	}
 	// Name is set but there is no pod yet, so excluding it is harmless.
-	if err := s.admit(r.Context(), env, true, true); err != nil {
-		fail(w, r, err)
-		return
+	if err := s.admit(ctx, env, true, true); err != nil {
+		return nil, err
 	}
 	if in.Password != "" {
 		// Exists check first so a stale password Secret is never reused.
-		if err := s.Client.Get(r.Context(), client.ObjectKeyFromObject(env), &devenvv1.DevEnvironment{}); err == nil {
-			fail(w, r, &httpError{http.StatusConflict, "already exists"})
-			return
+		if err := s.Client.Get(ctx, client.ObjectKeyFromObject(env), &devenvv1.DevEnvironment{}); err == nil {
+			return nil, &httpError{http.StatusConflict, "already exists"}
 		}
-		if _, err := s.storePassword(r.Context(), env, in.Password); err != nil {
-			fail(w, r, err)
-			return
+		if _, err := s.storePassword(ctx, env, in.Password); err != nil {
+			return nil, err
 		}
 		env.Spec.PasswordSecretName = passwordSecretName(env.Name)
 	}
-	if err := s.Client.Create(r.Context(), env); err != nil {
+	if err := s.Client.Create(ctx, env); err != nil {
 		if in.Password != "" {
-			_ = s.deletePassword(r.Context(), env.Name)
+			_ = s.deletePassword(ctx, env.Name)
 		}
-		fail(w, r, err)
-		return
+		return nil, err
 	}
 	if in.Password != "" {
-		if err := s.adoptPassword(r.Context(), env); err != nil {
-			logf.FromContext(r.Context()).Error(err, "adopt password secret", "environment", env.Name)
+		if err := s.adoptPassword(ctx, env); err != nil {
+			logf.FromContext(ctx).Error(err, "adopt password secret", "environment", env.Name)
 		}
+	}
+	return env, nil
+}
+
+func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
+	var in CreateEnvironmentRequest
+	if !decode(w, r, &in) {
+		return
+	}
+	env, err := s.CreateEnvironment(r.Context(), auth.UserFrom(r.Context()).Name, in, CreateOptions{})
+	if err != nil {
+		fail(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusCreated, toEnvironment(env))
 }
 
-func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
-	var in UpdateEnvironmentRequest
-	if !decode(w, r, &in) {
-		return
-	}
-	env, err := s.getEnv(r.Context(), r.PathValue("name"))
+// UpdateEnvironment applies a partial update.
+func (s *Server) UpdateEnvironment(ctx context.Context, name string, in UpdateEnvironmentRequest) (*devenvv1.DevEnvironment, error) {
+	env, err := s.getEnv(ctx, name)
 	if err != nil {
-		fail(w, r, err)
-		return
+		return nil, err
 	}
 	before := env.DeepCopy()
 	if in.Image != nil {
@@ -212,16 +216,14 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	if in.Resources != nil {
 		res, err := fromResourcesInput(*in.Resources)
 		if err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 		env.Spec.Resources = res
 	}
 	if in.SSHKeys != nil {
 		keys, err := normalizeKeys(*in.SSHKeys)
 		if err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 		env.Spec.SSHAuthorizedKeys = keys
 	}
@@ -231,10 +233,24 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	if in.Ports != nil {
 		ports, err := fromPortInputs(*in.Ports)
 		if err != nil {
-			fail(w, r, err)
-			return
+			return nil, err
 		}
 		env.Spec.Ports = ports
+	}
+
+	if in.IdleTimeoutText != nil && in.IdleTimeout == nil {
+		var d *metav1.Duration
+		if t := strings.TrimSpace(*in.IdleTimeoutText); t != "" && t != "off" {
+			v, err := time.ParseDuration(t)
+			if err != nil || v < time.Minute {
+				return nil, badRequest("invalid idleTimeout: use a duration such as 30m or 2h (minimum 1m)")
+			}
+			d = &metav1.Duration{Duration: v}
+		}
+		in.IdleTimeout = &d
+	}
+	if in.IdleTimeout != nil {
+		env.Spec.IdleTimeout = *in.IdleTimeout
 	}
 
 	removePassword := false
@@ -245,13 +261,11 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 			removePassword = true
 		} else {
 			if err := validatePassword(*in.Password); err != nil {
-				fail(w, r, err)
-				return
+				return nil, err
 			}
-			hash, err := s.storePassword(r.Context(), env, *in.Password)
+			hash, err := s.storePassword(ctx, env, *in.Password)
 			if err != nil {
-				fail(w, r, err)
-				return
+				return nil, err
 			}
 			pushHash = hash
 			env.Spec.PasswordSecretName = passwordSecretName(env.Name)
@@ -260,44 +274,61 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 
 	imageChanged := env.Spec.ImageRef != before.Spec.ImageRef
 	needsCapacity := imageChanged || in.Resources != nil || (env.IsRunning() && !before.IsRunning())
-	if err := s.admit(r.Context(), env, imageChanged, needsCapacity); err != nil {
-		fail(w, r, err)
-		return
+	if err := s.admit(ctx, env, imageChanged, needsCapacity); err != nil {
+		return nil, err
 	}
-	if err := s.Client.Patch(r.Context(), env, client.MergeFrom(before)); err != nil {
-		fail(w, r, err)
-		return
+	if err := s.Client.Patch(ctx, env, client.MergeFrom(before)); err != nil {
+		return nil, err
 	}
 	if removePassword {
-		if err := s.deletePassword(r.Context(), env.Name); err != nil {
-			logf.FromContext(r.Context()).Error(err, "delete password secret", "environment", env.Name)
+		if err := s.deletePassword(ctx, env.Name); err != nil {
+			logf.FromContext(ctx).Error(err, "delete password secret", "environment", env.Name)
 		}
 	}
 	if in.Password != nil {
 		s.pushPassword(env, pushHash)
 	}
-	writeJSON(w, http.StatusOK, toEnvironment(env))
+	return env, nil
 }
 
-func (s *Server) setRunning(w http.ResponseWriter, r *http.Request, running bool) {
-	env, err := s.getEnv(r.Context(), r.PathValue("name"))
+func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
+	var in UpdateEnvironmentRequest
+	if !decode(w, r, &in) {
+		return
+	}
+	env, err := s.UpdateEnvironment(r.Context(), r.PathValue("name"), in)
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, toEnvironment(env))
+}
+
+// SetRunning starts or stops an environment.
+func (s *Server) SetRunning(ctx context.Context, name string, running bool) (*devenvv1.DevEnvironment, error) {
+	env, err := s.getEnv(ctx, name)
+	if err != nil {
+		return nil, err
+	}
 	if env.IsRunning() == running {
-		writeJSON(w, http.StatusOK, toEnvironment(env))
-		return
+		return env, nil
 	}
 	before := env.DeepCopy()
 	env.Spec.Running = ptr.To(running)
 	if running {
-		if err := s.admit(r.Context(), env, false, true); err != nil {
-			fail(w, r, err)
-			return
+		if err := s.admit(ctx, env, false, true); err != nil {
+			return nil, err
 		}
 	}
-	if err := s.Client.Patch(r.Context(), env, client.MergeFrom(before)); err != nil {
+	if err := s.Client.Patch(ctx, env, client.MergeFrom(before)); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+func (s *Server) setRunning(w http.ResponseWriter, r *http.Request, running bool) {
+	env, err := s.SetRunning(r.Context(), r.PathValue("name"), running)
+	if err != nil {
 		fail(w, r, err)
 		return
 	}
@@ -307,14 +338,35 @@ func (s *Server) setRunning(w http.ResponseWriter, r *http.Request, running bool
 func (s *Server) startEnvironment(w http.ResponseWriter, r *http.Request) { s.setRunning(w, r, true) }
 func (s *Server) stopEnvironment(w http.ResponseWriter, r *http.Request)  { s.setRunning(w, r, false) }
 
-func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
-	env := &devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Name: r.PathValue("name"), Namespace: s.Namespace}}
+// DeleteEnvironment deletes an environment and, through owner references,
+// its pod, home volume and secrets.
+func (s *Server) DeleteEnvironment(ctx context.Context, name string) error {
+	env := &devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace}}
 	// Foreground deletion keeps the environment visible until children are gone.
-	if err := s.Client.Delete(r.Context(), env, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
+	return s.Client.Delete(ctx, env, client.PropagationPolicy(metav1.DeletePropagationForeground))
+}
+
+func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
+	if err := s.DeleteEnvironment(r.Context(), r.PathValue("name")); err != nil {
 		fail(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// GetEnvironment returns an environment.
+func (s *Server) GetEnvironment(ctx context.Context, name string) (*devenvv1.DevEnvironment, error) {
+	return s.getEnv(ctx, name)
+}
+
+// ListEnvironments returns all environments sorted by name.
+func (s *Server) ListEnvironments(ctx context.Context, opts ...client.ListOption) ([]devenvv1.DevEnvironment, error) {
+	list := &devenvv1.DevEnvironmentList{}
+	if err := s.Client.List(ctx, list, append([]client.ListOption{client.InNamespace(s.Namespace)}, opts...)...); err != nil {
+		return nil, err
+	}
+	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	return list.Items, nil
 }
 
 // +kubebuilder:rbac:groups="",resources=events,verbs=list

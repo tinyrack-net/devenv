@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -147,9 +150,9 @@ func TestCreatesChildren(t *testing.T) {
 	}
 
 	// Updating keys keeps the host key.
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 BBBB other@example"}
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 BBBB other@example"}
+	})
 	eventually(t, func() error {
 		s := &corev1.Secret{}
 		if err := get(s, f.ns, "dev1-ssh"); err != nil {
@@ -200,9 +203,9 @@ func TestStopAndStart(t *testing.T) {
 	eventually(t, func() error { return get(&corev1.Pod{}, f.ns, "dev1") })
 
 	// Stop: pod goes away, pvc stays.
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.Running = ptr.To(false)
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.Running = ptr.To(false)
+	})
 
 	waitPhase(t, env, devenvv1.PhaseStopped)
 	if err := get(&corev1.Pod{}, f.ns, "dev1"); !apierrors.IsNotFound(err) {
@@ -211,9 +214,9 @@ func TestStopAndStart(t *testing.T) {
 	must(t, get(&corev1.PersistentVolumeClaim{}, f.ns, "dev1-home"))
 
 	// Start again.
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.Running = ptr.To(true)
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.Running = ptr.To(true)
+	})
 	eventually(t, func() error { return get(&corev1.Pod{}, f.ns, "dev1") })
 }
 
@@ -241,10 +244,10 @@ func TestSpecChangeRecreatesPod(t *testing.T) {
 	pvc.Status.Capacity = pvc.Spec.Resources.Requests
 	must(t, k8sClient.Status().Update(testCtx, pvc))
 
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.Resources.CPU = qty("3")
-	env.Spec.Resources.Disk = qty("20Gi")
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.Resources.CPU = qty("3")
+		env.Spec.Resources.Disk = qty("20Gi")
+	})
 
 	eventually(t, func() error {
 		p := &corev1.Pod{}
@@ -359,9 +362,9 @@ func TestLoadBalancerMode(t *testing.T) {
 	})
 
 	// Stopping keeps the address.
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.Running = ptr.To(false)
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.Running = ptr.To(false)
+	})
 	cur := waitPhase(t, env, devenvv1.PhaseStopped)
 	if cur.Status.IP != "192.0.2.10" {
 		t.Errorf("ip lost on stop: %q", cur.Status.IP)
@@ -486,9 +489,9 @@ func TestPassword(t *testing.T) {
 	})
 
 	// Unrelated reconciles keep the same hash (no re-hashing).
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 CCCC x"}
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 CCCC x"}
+	})
 	eventually(t, func() error {
 		s := &corev1.Secret{}
 		if err := get(s, f.ns, "dev1-ssh"); err != nil {
@@ -520,9 +523,9 @@ func TestPassword(t *testing.T) {
 	})
 
 	// Removing the reference disables password login.
-	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
-	env.Spec.PasswordSecretName = ""
-	must(t, k8sClient.Update(testCtx, env))
+	updateEnv(t, env, func() {
+		env.Spec.PasswordSecretName = ""
+	})
 	eventually(t, func() error {
 		h, err := hashOf()
 		if err != nil {
@@ -533,4 +536,90 @@ func TestPassword(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestIdleStop(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
+	env := f.env("dev1")
+	env.Spec.IdleTimeout = &metav1.Duration{Duration: time.Hour}
+	must(t, k8sClient.Create(testCtx, env))
+
+	pod := &corev1.Pod{}
+	eventually(t, func() error { return get(pod, f.ns, "dev1") })
+	// envtest has no kubelet: mark the pod ready so the environment runs.
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()}}
+	must(t, k8sClient.Status().Update(testCtx, pod))
+	waitPhase(t, env, devenvv1.PhaseRunning)
+
+	// Recent activity keeps it running.
+	cur := &devenvv1.DevEnvironment{}
+	must(t, get(cur, f.ns, "dev1"))
+	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now()}
+	must(t, k8sClient.Status().Update(testCtx, cur))
+	time.Sleep(time.Second)
+	must(t, get(cur, f.ns, "dev1"))
+	if !cur.IsRunning() {
+		t.Fatal("stopped despite recent activity")
+	}
+
+	// Two hours later it is idle.
+	setNow(t, time.Now().Add(2*time.Hour))
+	must(t, get(cur, f.ns, "dev1"))
+	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now().Add(-time.Minute)} // trigger a reconcile
+	must(t, k8sClient.Status().Update(testCtx, cur))
+	eventually(t, func() error {
+		e := &devenvv1.DevEnvironment{}
+		if err := get(e, f.ns, "dev1"); err != nil {
+			return err
+		}
+		if e.IsRunning() {
+			return fmt.Errorf("still running")
+		}
+		return nil
+	})
+}
+
+func TestIdleDisabled(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
+	must(t, k8sClient.Create(testCtx, f.env("dev1")))
+	pod := &corev1.Pod{}
+	eventually(t, func() error { return get(pod, f.ns, "dev1") })
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()}}
+	must(t, k8sClient.Status().Update(testCtx, pod))
+	env := f.env("dev1")
+	waitPhase(t, env, devenvv1.PhaseRunning)
+
+	setNow(t, time.Now().Add(1000*time.Hour))
+	cur := &devenvv1.DevEnvironment{}
+	must(t, get(cur, f.ns, "dev1"))
+	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now()}
+	must(t, k8sClient.Status().Update(testCtx, cur))
+	time.Sleep(time.Second)
+	must(t, get(cur, f.ns, "dev1"))
+	if !cur.IsRunning() {
+		t.Error("environment without idleTimeout must not stop")
+	}
+}
+
+var nowMu sync.Mutex
+
+func setNow(t *testing.T, at time.Time) {
+	nowMu.Lock()
+	now = func() time.Time { return at }
+	t.Cleanup(func() { now = time.Now; nowMu.Unlock() })
+}
+
+// updateEnv re-reads env, applies mutate and updates, retrying on conflicts
+// with the controller.
+func updateEnv(t *testing.T, env *devenvv1.DevEnvironment, mutate func()) {
+	t.Helper()
+	must(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env); err != nil {
+			return err
+		}
+		mutate()
+		return k8sClient.Update(testCtx, env)
+	}))
 }

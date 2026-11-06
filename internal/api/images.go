@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,21 +61,11 @@ func (s *Server) imageUsage(r *http.Request) (map[string]int, error) {
 }
 
 func (s *Server) listImages(w http.ResponseWriter, r *http.Request) {
-	list := &devenvv1.DevImageList{}
-	if err := s.Client.List(r.Context(), list); err != nil {
-		fail(w, r, err)
-		return
-	}
-	usage, err := s.imageUsage(r)
+	out, err := s.ListImages(r.Context())
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
-	out := make([]Image, 0, len(list.Items))
-	for i := range list.Items {
-		out = append(out, toImage(&list.Items[i], usage[list.Items[i].Name]))
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -160,47 +149,21 @@ func (s *Server) deleteImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listClasses(w http.ResponseWriter, r *http.Request) {
-	list := &devenvv1.DevEnvironmentClassList{}
-	if err := s.Client.List(r.Context(), list); err != nil {
-		fail(w, r, err)
-		return
-	}
-	out := make([]Class, 0, len(list.Items))
-	for i := range list.Items {
-		out = append(out, toClass(&list.Items[i]))
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Default != out[j].Default {
-			return out[i].Default
-		}
-		return out[i].Name < out[j].Name
-	})
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) classCapacity(w http.ResponseWriter, r *http.Request) {
-	class := &devenvv1.DevEnvironmentClass{}
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: r.PathValue("name")}, class); err != nil {
-		fail(w, r, err)
-		return
-	}
-	// ?exclude=<env> gives back the resources of an existing environment's pod,
-	// so the UI can show the max when resizing.
-	var exclude *client.ObjectKey
-	if e := r.URL.Query().Get("exclude"); e != "" {
-		exclude = &client.ObjectKey{Namespace: s.Namespace, Name: e}
-	}
-	rep, err := s.Capacity.Report(r.Context(), &class.Spec, exclude)
+	out, err := s.ListClasses(r.Context())
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
-	out := Capacity{Class: class.Name, MaxCPU: rep.Max.CPU.String(), MaxMem: rep.Max.Memory.String(), Nodes: rep.Nodes}
-	if rep.MaxDisk != nil {
-		out.MaxDisk = rep.MaxDisk.String()
-	}
-	if out.Nodes == nil {
-		out.Nodes = []capacityNode{}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) classCapacity(w http.ResponseWriter, r *http.Request) {
+	// ?exclude=<env> gives back the resources of an existing environment's pod,
+	// so the UI can show the max when resizing.
+	out, err := s.ClassCapacity(r.Context(), r.PathValue("name"), r.URL.Query().Get("exclude"))
+	if err != nil {
+		fail(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -83,6 +83,8 @@ export interface Environment {
   networkMode?: "gateway" | "loadBalancer" | "multus";
   ports: PortSpec[];
   passwordSet: boolean;
+  idleTimeout?: string;
+  lastActivity?: string;
   sshAuthorizedKeys: string[];
   createdAt: string;
   deleting: boolean;
@@ -114,6 +116,8 @@ export interface UpdateEnvironment {
   ports?: PortSpec[];
   /** Empty string removes the password. */
   password?: string;
+  /** Duration such as "2h"; empty string disables idle stop. */
+  idleTimeout?: string;
 }
 
 export interface SSHKey {

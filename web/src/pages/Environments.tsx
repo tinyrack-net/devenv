@@ -72,6 +72,7 @@ function Row({ env }: { env: Environment }) {
       <td>
         {env.image}
         {env.desktop && <span className="tag">desktop</span>}
+        {env.owner === "mcp" && <span className="tag">AI agent</span>}
       </td>
       <td className="small">
         {env.resources.cpu ? formatCPU(env.resources.cpu) : "default"} ·{" "}

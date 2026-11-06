@@ -1,0 +1,392 @@
+package mcpserver
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/crypto/ssh"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/api"
+	"github.com/tinyrack-net/devenv/internal/auth"
+	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/sshclient"
+)
+
+const testToken = "dvm_test-token"
+
+func signer(t *testing.T) ssh.Signer {
+	_, sk, _ := ed25519.GenerateKey(rand.Reader)
+	s, err := ssh.NewSignerFromKey(sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// localSSHD executes exec requests on the test machine with bash, so the
+// real command wrapper (setsid bash -lc ...) is exercised.
+func localSSHD(t *testing.T, host ssh.Signer, client ssh.PublicKey) string {
+	cfg := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, k ssh.PublicKey) (*ssh.Permissions, error) {
+		if string(k.Marshal()) == string(client.Marshal()) {
+			return nil, nil
+		}
+		return nil, errors.New("denied")
+	}}
+	cfg.AddHostKey(host)
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_, chans, reqs, err := ssh.NewServerConn(c, cfg)
+				if err != nil {
+					return
+				}
+				go ssh.DiscardRequests(reqs)
+				for nc := range chans {
+					ch, creqs, _ := nc.Accept()
+					go func() {
+						var cmd *exec.Cmd
+						for r := range creqs {
+							switch r.Type {
+							case "exec":
+								n := binary.BigEndian.Uint32(r.Payload)
+								line := string(r.Payload[4 : 4+n])
+								// The test machine has no /home/dev.
+								line = strings.ReplaceAll(line, "/home/dev", t.TempDir())
+								cmd = exec.Command("sh", "-c", line)
+								cmd.Stdin, cmd.Stdout, cmd.Stderr = ch, ch, ch.Stderr()
+								r.Reply(true, nil)
+								if err := cmd.Start(); err != nil {
+									ch.Close()
+									return
+								}
+								go func() {
+									code := 0
+									if err := cmd.Wait(); err != nil {
+										var ee *exec.ExitError
+										if errors.As(err, &ee) {
+											code = ee.ExitCode()
+										}
+									}
+									ch.SendRequest("exit-status", false, ssh.Marshal(struct{ C uint32 }{uint32(code)}))
+									ch.Close()
+								}()
+							case "signal":
+								if cmd != nil && cmd.Process != nil {
+									// setsid made the child a group leader.
+									syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+									cmd.Process.Kill()
+								}
+							default:
+								r.Reply(false, nil)
+							}
+						}
+						if cmd != nil && cmd.Process != nil {
+							syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+						}
+					}()
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+type touches struct{ names []string }
+
+func (t *touches) Touch(n string) { t.names = append(t.names, n) }
+
+type harness struct {
+	t       *testing.T
+	c       client.Client
+	session *mcp.ClientSession
+	touched *touches
+	url     string
+}
+
+func q(s string) *resource.Quantity { v := resource.MustParse(s); return &v }
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = devenvv1.AddToScheme(s)
+	envHost, serverKey := signer(t), signer(t)
+	sshdAddr := localSSHD(t, envHost, serverKey.PublicKey())
+
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&devenvv1.DevEnvironment{}).WithObjects(
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("8"), corev1.ResourceMemory: resource.MustParse("16Gi")},
+				Conditions:  []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			},
+		},
+		&devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Spec: devenvv1.DevEnvironmentClassSpec{Limits: devenvv1.Limits{MaxCPU: q("4")}}},
+		&devenvv1.DevImage{ObjectMeta: metav1.ObjectMeta{Name: "base"}, Spec: devenvv1.DevImageSpec{Image: "example.com/base:1", DefaultResources: devenvv1.Resources{CPU: q("1"), Memory: q("1Gi")}}},
+	).Build()
+
+	sessions, _ := auth.NewSessions([]byte("k"), false)
+	dialer := &sshclient.Dialer{
+		Client: c, Namespace: "devenv", Signer: serverKey,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, sshdAddr)
+		},
+	}
+	apiSrv := &api.Server{
+		Client: c, Reader: c, Namespace: "devenv",
+		Auth: &auth.PasswordAuthenticator{Username: "admin", Password: "pw"}, Sessions: sessions,
+		Capacity: &capacity.Checker{Reader: c, Namespace: "devenv"}, Dialer: dialer,
+	}
+	tc := &touches{}
+	m := &Server{API: apiSrv, Dialer: dialer, Token: testToken, DefaultIdleTimeout: time.Hour, Activity: tc}
+	ts := httptest.NewServer(m.Handler())
+	t.Cleanup(ts.Close)
+
+	// A fake "controller": environments become Running immediately, with the
+	// host key Secret the dialer needs.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		for ctx.Err() == nil {
+			list := &devenvv1.DevEnvironmentList{}
+			_ = c.List(ctx, list)
+			for i := range list.Items {
+				e := &list.Items[i]
+				want := devenvv1.PhaseStopped
+				if e.IsRunning() {
+					want = devenvv1.PhaseRunning
+				}
+				if e.Status.Phase != want || e.Status.ObservedGeneration != e.Generation {
+					e.Status.Phase, e.Status.ServiceName, e.Status.ObservedGeneration = want, e.Name, e.Generation
+					_ = c.Status().Update(ctx, e)
+				}
+				sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: e.Name + "-ssh"},
+					Data: map[string][]byte{controller.HostPublicKeyFile: ssh.MarshalAuthorizedKey(envHost.PublicKey())}}
+				_ = c.Create(ctx, sec)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	h := &harness{t: t, c: c, touched: tc, url: ts.URL}
+	cl := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
+	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint:   ts.URL,
+		HTTPClient: &http.Client{Transport: bearer{testToken}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Close() })
+	h.session = sess
+	return h
+}
+
+type bearer struct{ token string }
+
+func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// call invokes a tool and decodes its structured output.
+func (h *harness) call(name string, args map[string]any, out any) (isError bool, text string) {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := h.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		h.t.Fatalf("%s: %v", name, err)
+	}
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if out != nil && !res.IsError {
+		b, _ := json.Marshal(res.StructuredContent)
+		if err := json.Unmarshal(b, out); err != nil {
+			h.t.Fatalf("%s: decode %s: %v", name, b, err)
+		}
+	}
+	return res.IsError, text
+}
+
+func TestAuth(t *testing.T) {
+	h := newHarness(t)
+	for _, tok := range []string{"", "Bearer wrong", "Basic " + testToken} {
+		req, _ := http.NewRequest("POST", h.url, strings.NewReader(`{}`))
+		if tok != "" {
+			req.Header.Set("Authorization", tok)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("auth %q: status %d", tok, resp.StatusCode)
+		}
+	}
+}
+
+func TestToolsListed(t *testing.T) {
+	h := newHarness(t)
+	res, err := h.session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, tool := range res.Tools {
+		got[tool.Name] = true
+	}
+	for _, want := range []string{"list_images", "list_classes", "get_capacity", "list_environments", "get_environment",
+		"create_environment", "update_environment", "start_environment", "stop_environment", "delete_environment", "exec"} {
+		if !got[want] {
+			t.Errorf("tool %s missing", want)
+		}
+	}
+}
+
+func TestLifecycleAndExec(t *testing.T) {
+	h := newHarness(t)
+
+	var imgs listImagesOut
+	h.call("list_images", nil, &imgs)
+	if len(imgs.Images) != 1 || imgs.Images[0].Name != "base" {
+		t.Fatalf("images = %+v", imgs)
+	}
+
+	if isErr, text := h.call("create_environment", map[string]any{"name": "agent1", "image": "base", "cpu": "16"}, nil); !isErr || !strings.Contains(text, "exceeds class limit") {
+		t.Errorf("limit violation: %v %s", isErr, text)
+	}
+	if isErr, text := h.call("create_environment", map[string]any{"name": "Bad Name", "image": "base"}, nil); !isErr || !strings.Contains(text, "name") {
+		t.Errorf("bad name: %v %s", isErr, text)
+	}
+
+	var created envOut
+	if isErr, text := h.call("create_environment", map[string]any{"name": "agent1", "image": "base", "memory": "2Gi"}, &created); isErr {
+		t.Fatalf("create: %s", text)
+	}
+	if created.Environment.Phase != "Running" || !created.Environment.CreatedByMCP || created.Environment.IdleTimeout != "1h0m0s" {
+		t.Errorf("created = %+v", created.Environment)
+	}
+	obj := &devenvv1.DevEnvironment{}
+	_ = h.c.Get(context.Background(), client.ObjectKey{Namespace: "devenv", Name: "agent1"}, obj)
+	if obj.Spec.Owner != "mcp" || obj.Labels[LabelCreatedBy] != "mcp" {
+		t.Errorf("owner/labels = %q %v", obj.Spec.Owner, obj.Labels)
+	}
+
+	var out execOut
+	if isErr, text := h.call("exec", map[string]any{"name": "agent1", "command": "echo hello; echo oops >&2; exit 3"}, &out); isErr {
+		t.Fatalf("exec: %s", text)
+	}
+	if out.ExitCode != 3 || out.Stdout != "hello\n" || out.Stderr != "oops\n" || out.TimedOut {
+		t.Errorf("exec = %+v", out)
+	}
+
+	h.call("exec", map[string]any{"name": "agent1", "command": `printf "%s|%s" "$FOO" "$(cat)"`, "env": map[string]string{"FOO": "it's"}, "stdin": "piped"}, &out)
+	if out.Stdout != "it's|piped" {
+		t.Errorf("env/stdin = %q", out.Stdout)
+	}
+	if isErr, _ := h.call("exec", map[string]any{"name": "agent1", "command": "true", "env": map[string]string{"BAD-NAME": "x"}}, nil); !isErr {
+		t.Error("invalid env name accepted")
+	}
+
+	start := time.Now()
+	h.call("exec", map[string]any{"name": "agent1", "command": "sleep 30", "timeout_seconds": 1}, &out)
+	if !out.TimedOut || out.ExitCode != -1 || time.Since(start) > 10*time.Second {
+		t.Errorf("timeout = %+v after %v", out, time.Since(start))
+	}
+
+	h.call("exec", map[string]any{"name": "agent1", "command": "head -c 600000 /dev/zero | tr '\\0' a"}, &out)
+	if !out.Truncated || len(out.Stdout) > maxStreamBytes+100 || !strings.Contains(out.Stdout, "bytes omitted") {
+		t.Errorf("truncation: truncated=%v len=%d", out.Truncated, len(out.Stdout))
+	}
+
+	// Stopped environments are started by exec.
+	var stopped envOut
+	h.call("stop_environment", map[string]any{"name": "agent1"}, &stopped)
+	if stopped.Environment.Phase != "Stopped" {
+		t.Errorf("stop = %+v", stopped.Environment)
+	}
+	if isErr, _ := h.call("exec", map[string]any{"name": "agent1", "command": "true", "auto_start": false}, nil); !isErr {
+		t.Error("exec on stopped env without auto_start should fail")
+	}
+	h.call("exec", map[string]any{"name": "agent1", "command": "echo back"}, &out)
+	if out.Stdout != "back\n" {
+		t.Errorf("auto start exec = %+v", out)
+	}
+
+	var upd envOut
+	if isErr, text := h.call("update_environment", map[string]any{"name": "agent1", "cpu": "2", "idle_timeout": "off"}, &upd); isErr {
+		t.Fatalf("update: %s", text)
+	}
+	if upd.Environment.Resources.CPU != "2" || upd.Environment.Resources.Memory != "2Gi" || upd.Environment.IdleTimeout != "" || upd.Note == "" {
+		t.Errorf("update = %+v", upd)
+	}
+
+	var list listEnvsOut
+	h.call("list_environments", map[string]any{"created_by_mcp_only": true}, &list)
+	if len(list.Environments) != 1 {
+		t.Errorf("list = %+v", list)
+	}
+	if len(h.touched.names) == 0 {
+		t.Error("activity not recorded")
+	}
+
+	var del deleteOut
+	h.call("delete_environment", map[string]any{"name": "agent1"}, &del)
+	if isErr, text := h.call("get_environment", map[string]any{"name": "agent1"}, nil); !isErr || !strings.Contains(text, "not found") {
+		t.Errorf("after delete: %v %s", isErr, text)
+	}
+}
+
+func TestBuildCommand(t *testing.T) {
+	cmd, err := buildCommand(execIn{Command: `printf '%s|%s|' "$A" "$B"; pwd`, Cwd: t.TempDir(), Env: map[string]string{"B": "two words", "A": "o'k"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(cmd, "exec setsid bash -lc ") {
+		t.Fatalf("cmd = %s", cmd)
+	}
+	// Quoting must survive a real shell.
+	out, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(out), "o'k|two words|/") {
+		t.Errorf("output = %q", out)
+	}
+}
