@@ -3,3 +3,5 @@
 node_modules/
 *.out
 .env
+/web/dist/*
+!/web/dist/.gitkeep

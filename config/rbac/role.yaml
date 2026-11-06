@@ -7,6 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
   - persistentvolumeclaims
   - pods
   - secrets
@@ -20,10 +21,23 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - events
+  - resourcequotas
+  verbs:
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+- apiGroups:
   - devenv.tinyrack.net
   resources:
   - devenvironmentclasses
-  - devimages
   verbs:
   - get
   - list
@@ -32,6 +46,7 @@ rules:
   - devenv.tinyrack.net
   resources:
   - devenvironments
+  - devimages
   verbs:
   - create
   - delete

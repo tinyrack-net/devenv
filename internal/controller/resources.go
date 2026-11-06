@@ -63,62 +63,24 @@ func selectorLabels(env *devenvv1.DevEnvironment) map[string]string {
 }
 
 func (r *resolved) storageMode() devenvv1.StorageMode {
-	if r.class.Spec.Storage.Mode == "" {
-		return devenvv1.StorageModePersistent
-	}
-	return r.class.Spec.Storage.Mode
+	return r.class.Spec.EffectiveStorageMode()
 }
 
 func (r *resolved) networkMode() devenvv1.NetworkMode {
-	if r.class.Spec.Network.Mode == "" {
-		return devenvv1.NetworkModeGateway
-	}
-	return r.class.Spec.Network.Mode
+	return r.class.Spec.EffectiveNetworkMode()
 }
 
-func firstQuantity(def string, qs ...*resource.Quantity) resource.Quantity {
-	for _, q := range qs {
-		if q != nil && !q.IsZero() {
-			return q.DeepCopy()
-		}
-	}
-	return resource.MustParse(def)
+func (r *resolved) resources() devenvv1.EffectiveResources {
+	return devenvv1.Resolve(r.env.Spec.Resources, &r.image.Spec, &r.class.Spec)
 }
 
-// effectiveResources merges environment, image and class defaults.
-func (r *resolved) cpu() resource.Quantity {
-	return firstQuantity(devenvv1.DefaultCPU, r.env.Spec.Resources.CPU, r.image.Spec.DefaultResources.CPU)
-}
-
-func (r *resolved) memory() resource.Quantity {
-	return firstQuantity(devenvv1.DefaultMemory, r.env.Spec.Resources.Memory, r.image.Spec.DefaultResources.Memory)
-}
-
-func (r *resolved) disk() resource.Quantity {
-	return firstQuantity(devenvv1.DefaultDisk, r.env.Spec.Resources.Disk, r.image.Spec.DefaultResources.Disk, r.class.Spec.Storage.DefaultSize)
-}
+func (r *resolved) cpu() resource.Quantity    { return r.resources().CPU }
+func (r *resolved) memory() resource.Quantity { return r.resources().Memory }
+func (r *resolved) disk() resource.Quantity   { return r.resources().Disk }
 
 // validate checks the request against class limits.
 func (r *resolved) validate() error {
-	l := r.class.Spec.Limits
-	check := func(name string, got resource.Quantity, max *resource.Quantity) error {
-		if max != nil && got.Cmp(*max) > 0 {
-			return fmt.Errorf("%s %s exceeds class limit %s", name, got.String(), max.String())
-		}
-		return nil
-	}
-	if err := check("cpu", r.cpu(), l.MaxCPU); err != nil {
-		return err
-	}
-	if err := check("memory", r.memory(), l.MaxMemory); err != nil {
-		return err
-	}
-	if r.storageMode() == devenvv1.StorageModePersistent {
-		if err := check("disk", r.disk(), l.MaxDisk); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r.class.Spec.CheckLimits(r.resources())
 }
 
 func (r *resolved) desiredSecret() *corev1.Secret {
