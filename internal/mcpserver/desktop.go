@@ -321,7 +321,7 @@ func (s *Server) registerDesktop(srv *mcp.Server) {
 	}))
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "desktop_type",
+		Name: "desktop_type",
 		Description: "Type text into the focused window of the desktop (Unicode supported; \\n presses Enter). Returns a screenshot afterwards. " +
 			"After opening a window, take a screenshot first to make sure it is focused and ready.",
 	}, logged("desktop_type", func(ctx context.Context, _ *mcp.CallToolRequest, in typeIn) (*mcp.CallToolResult, desktopOut, error) {
