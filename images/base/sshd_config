@@ -6,7 +6,11 @@ HostKey /etc/ssh/ssh_host_ed25519_key
 AuthorizedKeysCommand /usr/local/bin/devenv-authorized-keys %u
 AuthorizedKeysCommandUser nobody
 AuthorizedKeysFile .ssh/authorized_keys
-PasswordAuthentication no
+# Password login is enabled when the environment has a password
+# (synced into /etc/shadow by devenv-password-sync); accounts without one are
+# locked, so only keys work there.
+PasswordAuthentication yes
+PermitEmptyPasswords no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 AllowUsers dev

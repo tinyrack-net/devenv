@@ -82,6 +82,7 @@ export interface Environment {
   mac?: string;
   networkMode?: "gateway" | "loadBalancer" | "multus";
   ports: PortSpec[];
+  passwordSet: boolean;
   sshAuthorizedKeys: string[];
   createdAt: string;
   deleting: boolean;
@@ -102,6 +103,7 @@ export interface CreateEnvironment {
   sshAuthorizedKeys?: string[];
   running?: boolean;
   ports?: PortSpec[];
+  password?: string;
 }
 
 export interface UpdateEnvironment {
@@ -110,6 +112,8 @@ export interface UpdateEnvironment {
   sshAuthorizedKeys?: string[];
   running?: boolean;
   ports?: PortSpec[];
+  /** Empty string removes the password. */
+  password?: string;
 }
 
 export interface SSHKey {

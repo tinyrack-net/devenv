@@ -25,14 +25,14 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
     && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
     && chmod 0440 /etc/sudoers.d/dev \
-    && passwd -d dev \
+    && usermod -p '!' dev \
     && cp -a /home/dev/. /etc/skel/ 2>/dev/null || true
 
 RUN mkdir -p /run/sshd /etc/devenv/entrypoint.d \
     && rm -f /etc/ssh/ssh_host_*
 COPY sshd_config /etc/ssh/sshd_config.d/devenv.conf
-COPY devenv-entrypoint devenv-authorized-keys /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/devenv-entrypoint /usr/local/bin/devenv-authorized-keys
+COPY devenv-entrypoint devenv-authorized-keys devenv-password-sync /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/devenv-entrypoint /usr/local/bin/devenv-authorized-keys /usr/local/bin/devenv-password-sync
 
 EXPOSE 22
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/devenv-entrypoint"]

@@ -22,14 +22,18 @@ elif [ ! -s /etc/ssh/ssh_host_ed25519_key ]; then
   ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
 fi
 
-# 3. Environment for SSH sessions (sshd does not pass the container env).
+# 3. Password from the environment Secret; kept in sync in the background.
+/usr/local/bin/devenv-password-sync --once
+/usr/local/bin/devenv-password-sync &
+
+# 4. Environment for SSH sessions (sshd does not pass the container env).
 sed -i '/^DEVENV_/d' /etc/environment
 {
   echo "DEVENV_NAME=${DEVENV_NAME:-}"
   echo "DEVENV_OWNER=${DEVENV_OWNER:-}"
 } >> /etc/environment
 
-# 4. Image specific hooks (e.g. desktop/VNC) in /etc/devenv/entrypoint.d.
+# 5. Image specific hooks (e.g. desktop/VNC) in /etc/devenv/entrypoint.d.
 for hook in /etc/devenv/entrypoint.d/*.sh; do
   [ -e "$hook" ] || continue
   log "running $(basename "$hook")"
@@ -37,7 +41,7 @@ for hook in /etc/devenv/entrypoint.d/*.sh; do
   . "$hook"
 done
 
-# 5. sshd in the foreground. Overridable for debugging.
+# 6. sshd in the foreground. Overridable for debugging.
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi

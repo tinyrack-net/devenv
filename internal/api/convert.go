@@ -107,6 +107,7 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 		MAC:         e.Status.MAC,
 		NetworkMode: string(e.Status.NetworkMode),
 		Ports:       toPortInputs(e.Spec.Ports),
+		PasswordSet: e.Spec.PasswordSecretName != "",
 		SSHKeys:     keys,
 		CreatedAt:   e.CreationTimestamp.Time,
 		Deleting:    !e.DeletionTimestamp.IsZero(),

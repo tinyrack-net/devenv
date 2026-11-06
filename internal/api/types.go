@@ -55,6 +55,7 @@ type Environment struct {
 	MAC         string         `json:"mac,omitempty"`
 	NetworkMode string         `json:"networkMode,omitempty"`
 	Ports       []PortInput    `json:"ports"`
+	PasswordSet bool           `json:"passwordSet"`
 	SSHKeys     []string       `json:"sshAuthorizedKeys"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	Deleting    bool           `json:"deleting"`
@@ -71,6 +72,8 @@ type CreateEnvironmentRequest struct {
 	SSHKeys *[]string   `json:"sshAuthorizedKeys,omitempty"`
 	Running *bool       `json:"running,omitempty"`
 	Ports   []PortInput `json:"ports,omitempty"`
+	// Password of the dev user; enables SSH password login. Optional.
+	Password string `json:"password,omitempty"`
 }
 
 // PortInput is a port exposed in loadBalancer network mode.
@@ -87,6 +90,8 @@ type UpdateEnvironmentRequest struct {
 	SSHKeys   *[]string       `json:"sshAuthorizedKeys,omitempty"`
 	Running   *bool           `json:"running,omitempty"`
 	Ports     *[]PortInput    `json:"ports,omitempty"`
+	// Password sets the password; an empty string removes it.
+	Password *string `json:"password,omitempty"`
 }
 
 // SSHKey is a stored public key of the user.

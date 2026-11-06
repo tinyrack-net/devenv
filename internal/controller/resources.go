@@ -216,6 +216,7 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 						{Key: AuthorizedKeysFile, Path: AuthorizedKeysFile},
 						{Key: HostKeyFile, Path: HostKeyFile, Mode: ptr.To[int32](0o600)},
 						{Key: HostPublicKeyFile, Path: HostPublicKeyFile},
+						{Key: PasswordHashFile, Path: PasswordHashFile, Mode: ptr.To[int32](0o600)},
 					},
 				}}},
 			},

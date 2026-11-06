@@ -37,6 +37,14 @@ type DevEnvironmentSpec struct {
 	// +optional
 	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
 
+	// PasswordSecretName references a Secret in the environment namespace
+	// holding the password of the dev user, either as a bcrypt hash in key
+	// "passwordHash" or in plain text in key "password". The password enables
+	// SSH password login (directly and through the gateway). Empty disables
+	// password login.
+	// +optional
+	PasswordSecretName string `json:"passwordSecretName,omitempty"`
+
 	// Ports exposed on the environment's own address in loadBalancer
 	// network mode. SSH (22) is always exposed. Ignored in other modes
 	// (multus exposes every port).
@@ -119,6 +127,10 @@ type DevEnvironmentStatus struct {
 	// NetworkMode is the effective network mode of the class.
 	// +optional
 	NetworkMode NetworkMode `json:"networkMode,omitempty"`
+
+	// PasswordSet reports whether password login is enabled.
+	// +optional
+	PasswordSet bool `json:"passwordSet,omitempty"`
 
 	// MAC is the secondary interface MAC address (multus mode).
 	// +optional

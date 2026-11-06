@@ -19,7 +19,8 @@ kubectl -n devenv-system port-forward svc/devenv 8080:80   # http://localhost:80
 
 Expose the console with `ingress.*` or `httpRoute.*`, and the SSH gateway with
 `sshService.type=LoadBalancer` (or `NodePort`). Then connect with
-`ssh -p 2222 <environment>@<host>`.
+`ssh -p 2222 <environment>@<host>` using a registered SSH key or the
+environment password (optional, set when creating the environment).
 
 See [docs/images.md](docs/images.md) to build your own environment images and
 [docs/networking.md](docs/networking.md) for dedicated IPs (LoadBalancer, Multus/DHCP).

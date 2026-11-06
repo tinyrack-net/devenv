@@ -19,6 +19,8 @@ export function NewEnvironmentPage() {
   const [cls, setCls] = useState("");
   const [resources, setResources] = useState<Resources>({});
   const [selectedKeys, setSelectedKeys] = useState<Set<string> | null>(null);
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
 
   const available = useMemo(() => images.data?.filter((i) => !i.disabled) ?? [], [images.data]);
   const selectedImage = available.find((i) => i.name === image);
@@ -55,6 +57,7 @@ export function NewEnvironmentPage() {
           disk: selectedClass?.storageMode === "ephemeral" ? undefined : (resources.disk ?? defaults.disk),
         },
         sshAuthorizedKeys: keys.data?.filter((k) => selectedKeys?.has(k.id)).map((k) => k.publicKey) ?? [],
+        password: password || undefined,
       }),
     onSuccess: async (env) => {
       await qc.invalidateQueries({ queryKey: ["environments"] });
@@ -62,6 +65,12 @@ export function NewEnvironmentPage() {
     },
   });
 
+  const passwordError =
+    password && password.length < 8
+      ? "At least 8 characters"
+      : password && password !== password2
+        ? "Passwords do not match"
+        : null;
   const nameError = name && (!NAME_RE.test(name) || name.length > 40) ? "Lowercase letters, digits and '-', max 40" : null;
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -145,11 +154,33 @@ export function NewEnvironmentPage() {
           ))}
         </Field>
 
+        <Field
+          label="Password (optional)"
+          hint={passwordError ?? "Password for the dev user. Enables SSH password login; SSH keys keep working."}
+        >
+          <div className="row">
+            <input
+              type="password"
+              autoComplete="new-password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              placeholder="Confirm"
+              value={password2}
+              onChange={(e) => setPassword2(e.target.value)}
+            />
+          </div>
+        </Field>
+
         <div className="form-actions">
           <Link to="/" className="button">
             Cancel
           </Link>
-          <button className="primary" disabled={!name || !!nameError || !image || !cls || create.isPending}>
+          <button className="primary" disabled={!name || !!nameError || !!passwordError || !image || !cls || create.isPending}>
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -347,5 +348,49 @@ func TestPorts(t *testing.T) {
 	h.do("PATCH", "/api/v1/environments/web", UpdateEnvironmentRequest{Ports: &[]PortInput{}}, 200, &env)
 	if len(env.Ports) != 0 {
 		t.Errorf("ports not cleared: %+v", env.Ports)
+	}
+}
+
+func TestPassword(t *testing.T) {
+	h := newHarness(t)
+	h.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "pw", Image: "base", Password: "short"}, 400, nil)
+
+	var env Environment
+	h.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "pw", Image: "base", Password: "long enough pw"}, 201, &env)
+	if !env.PasswordSet {
+		t.Errorf("passwordSet false")
+	}
+	sec := &corev1.Secret{}
+	if err := h.c.Get(t.Context(), client.ObjectKey{Namespace: "devenv", Name: "pw-password"}, sec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sec.Data["password"]; ok {
+		t.Error("plain password must not be stored")
+	}
+	if bcrypt.CompareHashAndPassword(sec.Data["passwordHash"], []byte("long enough pw")) != nil {
+		t.Error("hash does not match")
+	}
+	if len(sec.OwnerReferences) != 1 || sec.OwnerReferences[0].Name != "pw" {
+		t.Errorf("owner refs = %+v", sec.OwnerReferences)
+	}
+
+	// Password is never returned.
+	rec := h.raw("GET", "/api/v1/environments/pw", "", true)
+	if strings.Contains(rec.Body.String(), "long enough") || strings.Contains(rec.Body.String(), "$2a$") {
+		t.Errorf("password leaked: %s", rec.Body)
+	}
+
+	empty := ""
+	h.do("PATCH", "/api/v1/environments/pw", UpdateEnvironmentRequest{Password: &empty}, 200, &env)
+	if env.PasswordSet {
+		t.Error("password not removed")
+	}
+	if err := h.c.Get(t.Context(), client.ObjectKey{Namespace: "devenv", Name: "pw-password"}, &corev1.Secret{}); err == nil {
+		t.Error("password secret not deleted")
+	}
+	pw := "another password"
+	h.do("PATCH", "/api/v1/environments/pw", UpdateEnvironmentRequest{Password: &pw}, 200, &env)
+	if !env.PasswordSet {
+		t.Error("password not set again")
 	}
 }

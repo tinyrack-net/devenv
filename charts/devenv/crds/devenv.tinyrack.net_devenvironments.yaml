@@ -65,6 +65,14 @@ spec:
               owner:
                 description: Owner identifies the user owning this environment.
                 type: string
+              passwordSecretName:
+                description: |-
+                  PasswordSecretName references a Secret in the environment namespace
+                  holding the password of the dev user, either as a bcrypt hash in key
+                  "passwordHash" or in plain text in key "password". The password enables
+                  SSH password login (directly and through the gateway). Empty disables
+                  password login.
+                type: string
               ports:
                 description: |-
                   Ports exposed on the environment's own address in loadBalancer
@@ -240,6 +248,9 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              passwordSet:
+                description: PasswordSet reports whether password login is enabled.
+                type: boolean
               phase:
                 description: Phase is a high level summary of the environment state.
                 enum:

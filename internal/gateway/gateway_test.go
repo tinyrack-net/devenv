@@ -157,7 +157,10 @@ func start(t *testing.T, phase devenvv1.Phase) setup {
 		},
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "work-ssh"},
-			Data:       map[string][]byte{controller.HostPublicKeyFile: ssh.MarshalAuthorizedKey(envHost.PublicKey())},
+			Data: map[string][]byte{
+				controller.HostPublicKeyFile: ssh.MarshalAuthorizedKey(envHost.PublicKey()),
+				controller.PasswordHashFile:  []byte(testHash),
+			},
 		},
 	).Build()
 
@@ -281,5 +284,32 @@ func TestStoppedEnvironmentMessage(t *testing.T) {
 	sess.Wait()
 	if !strings.Contains(stderr.String(), "not running") {
 		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+var testHash, _ = controller.HashPassword("correct horse")
+
+func TestPasswordAuth(t *testing.T) {
+	s := start(t, devenvv1.PhaseRunning)
+	dial := func(user, pw string) (*ssh.Client, error) {
+		return ssh.Dial("tcp", s.addr, &ssh.ClientConfig{
+			User: user, Auth: []ssh.AuthMethod{ssh.Password(pw)},
+			HostKeyCallback: ssh.FixedHostKey(s.gwHost), Timeout: 10 * time.Second,
+		})
+	}
+	c, err := dial("work", "correct horse")
+	if err != nil {
+		t.Fatalf("password login: %v", err)
+	}
+	sess, _ := c.NewSession()
+	if out, err := sess.Output("echo via-password"); err != nil || string(out) != "via-password\n" {
+		t.Errorf("exec = %q %v", out, err)
+	}
+	c.Close()
+	if _, err := dial("work", "wrong"); err == nil {
+		t.Error("wrong password accepted")
+	}
+	if _, err := dial("nosuch", "correct horse"); err == nil {
+		t.Error("unknown environment accepted")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -111,4 +112,40 @@ func (d *Dialer) DialRaw(ctx context.Context, name string) (ssh.Conn, <-chan ssh
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return c, chans, reqs, nil
+}
+
+// PasswordHash returns the bcrypt hash of the environment's password, or ""
+// when password login is disabled.
+func (d *Dialer) PasswordHash(ctx context.Context, name string) (hash, envName string, err error) {
+	env, err := d.Environment(ctx, name)
+	if err != nil {
+		return "", "", err
+	}
+	sec := &corev1.Secret{}
+	if err := d.Client.Get(ctx, client.ObjectKey{Namespace: d.Namespace, Name: env.Name + "-ssh"}, sec); err != nil {
+		return "", "", err
+	}
+	return string(sec.Data[controller.PasswordHashFile]), env.Name, nil
+}
+
+// PushPassword applies a bcrypt hash ("" locks the password) inside a running
+// environment immediately, instead of waiting for the kubelet to refresh the
+// Secret volume. Images without the helper are left alone.
+func (d *Dialer) PushPassword(ctx context.Context, name, hash string) error {
+	c, err := d.Dial(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	s, err := c.NewSession()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	s.Stdin = strings.NewReader(hash + "\n")
+	out, err := s.CombinedOutput("if [ -x /usr/local/bin/devenv-password-sync ]; then sudo -n /usr/local/bin/devenv-password-sync --stdin; fi")
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

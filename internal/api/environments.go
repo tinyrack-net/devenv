@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/auth"
@@ -125,6 +126,12 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
+	if in.Password != "" {
+		if err := validatePassword(in.Password); err != nil {
+			fail(w, r, err)
+			return
+		}
+	}
 	user := auth.UserFrom(r.Context())
 
 	var keys []string
@@ -161,9 +168,29 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
+	if in.Password != "" {
+		// Exists check first so a stale password Secret is never reused.
+		if err := s.Client.Get(r.Context(), client.ObjectKeyFromObject(env), &devenvv1.DevEnvironment{}); err == nil {
+			fail(w, r, &httpError{http.StatusConflict, "already exists"})
+			return
+		}
+		if _, err := s.storePassword(r.Context(), env, in.Password); err != nil {
+			fail(w, r, err)
+			return
+		}
+		env.Spec.PasswordSecretName = passwordSecretName(env.Name)
+	}
 	if err := s.Client.Create(r.Context(), env); err != nil {
+		if in.Password != "" {
+			_ = s.deletePassword(r.Context(), env.Name)
+		}
 		fail(w, r, err)
 		return
+	}
+	if in.Password != "" {
+		if err := s.adoptPassword(r.Context(), env); err != nil {
+			logf.FromContext(r.Context()).Error(err, "adopt password secret", "environment", env.Name)
+		}
 	}
 	writeJSON(w, http.StatusCreated, toEnvironment(env))
 }
@@ -210,6 +237,27 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		env.Spec.Ports = ports
 	}
 
+	removePassword := false
+	pushHash := ""
+	if in.Password != nil {
+		if *in.Password == "" {
+			env.Spec.PasswordSecretName = ""
+			removePassword = true
+		} else {
+			if err := validatePassword(*in.Password); err != nil {
+				fail(w, r, err)
+				return
+			}
+			hash, err := s.storePassword(r.Context(), env, *in.Password)
+			if err != nil {
+				fail(w, r, err)
+				return
+			}
+			pushHash = hash
+			env.Spec.PasswordSecretName = passwordSecretName(env.Name)
+		}
+	}
+
 	imageChanged := env.Spec.ImageRef != before.Spec.ImageRef
 	needsCapacity := imageChanged || in.Resources != nil || (env.IsRunning() && !before.IsRunning())
 	if err := s.admit(r.Context(), env, imageChanged, needsCapacity); err != nil {
@@ -219,6 +267,14 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	if err := s.Client.Patch(r.Context(), env, client.MergeFrom(before)); err != nil {
 		fail(w, r, err)
 		return
+	}
+	if removePassword {
+		if err := s.deletePassword(r.Context(), env.Name); err != nil {
+			logf.FromContext(r.Context()).Error(err, "delete password secret", "environment", env.Name)
+		}
+	}
+	if in.Password != nil {
+		s.pushPassword(env, pushHash)
 	}
 	writeJSON(w, http.StatusOK, toEnvironment(env))
 }

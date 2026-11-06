@@ -26,6 +26,7 @@ import (
 const (
 	indexImageRef  = "spec.imageRef"
 	indexClassName = "spec.className"
+	indexPassword  = "spec.passwordSecretName"
 )
 
 // DevEnvironmentReconciler reconciles DevEnvironment objects.
@@ -141,6 +142,20 @@ func (r *DevEnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolve
 	}
 	desired := rs.desiredSecret(extra...)
 	obj := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace}}
+	current := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		current = nil
+	}
+	pwHash, pwSource, pwErr := r.resolvePassword(ctx, rs.env, current)
+	if pwErr != nil {
+		// Keep the environment usable with keys; report the problem.
+		r.Recorder.Eventf(rs.env, nil, corev1.EventTypeWarning, "PasswordInvalid", "Password", "%v", pwErr)
+		pwHash, pwSource = "", ""
+	}
+	rs.env.Status.PasswordSet = pwHash != ""
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
 		priv, pub := obj.Data[HostKeyFile], obj.Data[HostPublicKeyFile]
 		if len(priv) == 0 || len(pub) == 0 {
@@ -154,6 +169,15 @@ func (r *DevEnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolve
 		obj.Data = desired.Data
 		obj.Data[HostKeyFile] = priv
 		obj.Data[HostPublicKeyFile] = pub
+		obj.Data[PasswordHashFile] = []byte(pwHash)
+		if obj.Annotations == nil {
+			obj.Annotations = map[string]string{}
+		}
+		if pwSource != "" {
+			obj.Annotations[annotationPasswordSource] = pwSource
+		} else {
+			delete(obj.Annotations, annotationPasswordSource)
+		}
 		return controllerutil.SetControllerReference(rs.env, obj, r.Scheme)
 	})
 	return err
@@ -400,6 +424,15 @@ func (r *DevEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	if err := idx.IndexField(ctx, &devenvv1.DevEnvironment{}, indexPassword, func(o client.Object) []string {
+		if n := o.(*devenvv1.DevEnvironment).Spec.PasswordSecretName; n != "" {
+			return []string{n}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&devenvv1.DevEnvironment{}).
 		Owns(&corev1.Pod{}).
@@ -407,9 +440,23 @@ func (r *DevEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Watches(&devenvv1.DevImage{}, handler.EnqueueRequestsFromMapFunc(r.mapBy(indexImageRef))).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapPasswordSecret)).
 		Watches(&devenvv1.DevEnvironmentClass{}, handler.EnqueueRequestsFromMapFunc(r.mapBy(indexClassName))).
 		Named("devenvironment").
 		Complete(r)
+}
+
+// mapPasswordSecret enqueues environments referencing a password Secret.
+func (r *DevEnvironmentReconciler) mapPasswordSecret(ctx context.Context, o client.Object) []reconcile.Request {
+	list := &devenvv1.DevEnvironmentList{}
+	if err := r.List(ctx, list, client.InNamespace(o.GetNamespace()), client.MatchingFields{indexPassword: o.GetName()}); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for _, e := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&e)})
+	}
+	return reqs
 }
 
 func (r *DevEnvironmentReconciler) mapBy(field string) handler.MapFunc {

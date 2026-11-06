@@ -11,6 +11,7 @@ import {
 } from "../components/common";
 import { ResourceInputs } from "../components/ResourceInputs";
 import { Ports } from "../components/Ports";
+import { PasswordControl } from "../components/PasswordControl";
 import { formatBytes, formatCPU, gib } from "../quantity";
 
 // Heavy viewers are loaded on demand.
@@ -231,6 +232,11 @@ function Detail({ env }: { env: Environment }) {
             </section>
           )}
 
+          <section className="card">
+            <h2>Password</h2>
+            <PasswordControl env={env} />
+          </section>
+
           <section className="card wide">
             <h2>Events</h2>
             <Events name={env.name} />
@@ -316,7 +322,10 @@ function ConnectInfo({ env }: { env: Environment }) {
             Also via gateway: <code>ssh -p {ssh.port} {env.name}@{ssh.host || window.location.hostname}</code>
           </div>
         )}
-        <div className="small muted">Authorized keys: {env.sshAuthorizedKeys.length}</div>
+        <div className="small muted">
+          Authorized keys: {env.sshAuthorizedKeys.length}
+          {env.passwordSet && " · password login enabled"}
+        </div>
       </div>
     );
   }
@@ -365,8 +374,10 @@ function ConnectInfo({ env }: { env: Environment }) {
       )}
       <div className="small muted">
         Authorized keys: {env.sshAuthorizedKeys.length}
+        {env.passwordSet && " · password login enabled"}
         {env.sshAuthorizedKeys.length === 0 &&
-          " — add a key to connect over SSH"}
+          !env.passwordSet &&
+          " — add a key or set a password to connect over SSH"}
       </div>
     </div>
   );

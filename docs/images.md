@@ -13,6 +13,7 @@ implement it and are good starting points (`FROM ghcr.io/tinyrack-net/devenv-bas
 | SSH | sshd on port 22, user `dev`, public key authentication |
 | Authorized keys | read `/etc/devenv/ssh/authorized_keys` (use `AuthorizedKeysCommand`; Secret volumes fail `StrictModes`) |
 | Host key | use `/etc/devenv/ssh/ssh_host_ed25519_key` (stable per environment; the server pins it) |
+| Password (optional) | `/etc/devenv/ssh/password_hash` holds a bcrypt hash or is empty; apply it to `dev` in `/etc/shadow` (empty = locked) and allow `PasswordAuthentication`. For instant changes, provide `/usr/local/bin/devenv-password-sync --stdin` (the server pipes the new hash to it over SSH) |
 | Desktop (optional) | VNC (RFB) on `127.0.0.1:5901`, no password. Set `desktop: true` on the DevImage |
 
 The devenv server reaches the environment only through SSH. The web

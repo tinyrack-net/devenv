@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -441,5 +442,95 @@ func TestCELValidation(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "multus is required") {
 			t.Errorf("expected multus validation error, got %v", err)
 		}
+	})
+}
+
+func TestPassword(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
+	must(t, k8sClient.Create(testCtx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: f.ns, Name: "dev1-password"},
+		StringData: map[string]string{PasswordKey: "first-password"},
+	}))
+	env := f.env("dev1")
+	env.Spec.PasswordSecretName = "dev1-password"
+	must(t, k8sClient.Create(testCtx, env))
+
+	hashOf := func() (string, error) {
+		s := &corev1.Secret{}
+		if err := get(s, f.ns, "dev1-ssh"); err != nil {
+			return "", err
+		}
+		return string(s.Data[PasswordHashFile]), nil
+	}
+	var first string
+	eventually(t, func() error {
+		h, err := hashOf()
+		if err != nil {
+			return err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte("first-password")) != nil {
+			return fmt.Errorf("hash %q does not match", h)
+		}
+		first = h
+		return nil
+	})
+	cur := &devenvv1.DevEnvironment{}
+	eventually(t, func() error {
+		if err := get(cur, f.ns, "dev1"); err != nil {
+			return err
+		}
+		if !cur.Status.PasswordSet {
+			return fmt.Errorf("passwordSet false")
+		}
+		return nil
+	})
+
+	// Unrelated reconciles keep the same hash (no re-hashing).
+	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
+	env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 CCCC x"}
+	must(t, k8sClient.Update(testCtx, env))
+	eventually(t, func() error {
+		s := &corev1.Secret{}
+		if err := get(s, f.ns, "dev1-ssh"); err != nil {
+			return err
+		}
+		if !strings.Contains(string(s.Data[AuthorizedKeysFile]), "CCCC") {
+			return fmt.Errorf("keys not updated")
+		}
+		if string(s.Data[PasswordHashFile]) != first {
+			return fmt.Errorf("hash changed without password change")
+		}
+		return nil
+	})
+
+	// Changing the password Secret updates the hash.
+	pw := &corev1.Secret{}
+	must(t, get(pw, f.ns, "dev1-password"))
+	pw.Data = map[string][]byte{PasswordKey: []byte("second-password")}
+	must(t, k8sClient.Update(testCtx, pw))
+	eventually(t, func() error {
+		h, err := hashOf()
+		if err != nil {
+			return err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte("second-password")) != nil {
+			return fmt.Errorf("hash not updated")
+		}
+		return nil
+	})
+
+	// Removing the reference disables password login.
+	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
+	env.Spec.PasswordSecretName = ""
+	must(t, k8sClient.Update(testCtx, env))
+	eventually(t, func() error {
+		h, err := hashOf()
+		if err != nil {
+			return err
+		}
+		if h != "" {
+			return fmt.Errorf("hash still set")
+		}
+		return nil
 	})
 }

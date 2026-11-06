@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -74,6 +75,10 @@ func (g *Gateway) config(ctx context.Context) *ssh.ServerConfig {
 		PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			return g.authorize(ctx, meta.User(), key)
 		},
+		PasswordCallback: func(meta ssh.ConnMetadata, pw []byte) (*ssh.Permissions, error) {
+			return g.authorizePassword(ctx, meta.User(), pw)
+		},
+		MaxAuthTries:   6,
 		BannerCallback: func(ssh.ConnMetadata) string { return g.Banner },
 		ServerVersion:  "SSH-2.0-devenv",
 	}
@@ -99,6 +104,28 @@ func (g *Gateway) authorize(ctx context.Context, user string, key ssh.PublicKey)
 	return nil, errors.New("key not authorized")
 }
 
+// authorizePassword checks the password against the environment's bcrypt
+// hash (the same hash the environment uses in /etc/shadow).
+func (g *Gateway) authorizePassword(ctx context.Context, user string, pw []byte) (*ssh.Permissions, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	hash, envName, err := g.Dialer.PasswordHash(ctx, user)
+	if err != nil || hash == "" {
+		// Spend comparable time so missing environments are not distinguishable.
+		_ = bcrypt.CompareHashAndPassword(dummyHash, pw)
+		time.Sleep(time.Second)
+		return nil, errors.New("password login not available")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), pw) != nil {
+		time.Sleep(time.Second)
+		return nil, errors.New("wrong password")
+	}
+	return &ssh.Permissions{Extensions: map[string]string{permEnv: envName}}, nil
+}
+
+// dummyHash is compared against when no hash exists, to equalize timing.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("devenv-dummy-password"), 10)
+
 func (g *Gateway) handle(ctx context.Context, nConn net.Conn) {
 	defer nConn.Close()
 	_ = nConn.SetDeadline(time.Now().Add(30 * time.Second))
@@ -114,7 +141,16 @@ func (g *Gateway) handle(ctx context.Context, nConn net.Conn) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	up, upChans, upReqs, err := g.Dialer.DialRaw(ctx, envName)
+	var up ssh.Conn
+	var upChans <-chan ssh.NewChannel
+	var upReqs <-chan *ssh.Request
+	for attempt := 0; ; attempt++ {
+		up, upChans, upReqs, err = g.Dialer.DialRaw(ctx, envName)
+		if err == nil || errors.Is(err, sshclient.ErrNotRunning) || attempt >= 5 || ctx.Err() != nil {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	if err != nil {
 		msg := "environment unavailable"
 		if errors.Is(err, sshclient.ErrNotRunning) {
