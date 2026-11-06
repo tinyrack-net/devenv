@@ -49,5 +49,4 @@ make build-all            # build web console and embed it into bin/devenv
 | `DEVENV_KEYS_SECRET` | `devenv-keys` | Secret (in `POD_NAMESPACE`) where the server stores generated session and SSH keys |
 | `DEVENV_SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
 | `DEVENV_MCP_ENABLED` | `true` | Serve `/mcp` |
-| `DEVENV_MCP_DEFAULT_IDLE_TIMEOUT` | `1h` | Idle timeout for environments created through MCP |
 | `DEVENV_MCP_TOKEN` / `_FILE` | generated | MCP bearer token (default: `mcp-token` in the keys Secret) |

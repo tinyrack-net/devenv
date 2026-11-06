@@ -58,12 +58,6 @@ spec:
                 description: ClassName is the name of a DevEnvironmentClass. Defaults
                   to "default".
                 type: string
-              idleTimeout:
-                description: |-
-                  IdleTimeout stops the environment after this long without activity
-                  (web terminal, desktop, SSH gateway sessions, MCP calls). Activity on a
-                  dedicated IP is not observed. Empty disables idle stop.
-                type: string
               imageRef:
                 description: ImageRef is the name of a DevImage.
                 minLength: 1
@@ -234,11 +228,6 @@ spec:
               ip:
                 description: IP is the externally reachable address (loadBalancer
                   or multus mode).
-                type: string
-              lastActivityTime:
-                description: LastActivityTime is the last observed activity, used
-                  for idle stop.
-                format: date-time
                 type: string
               mac:
                 description: MAC is the secondary interface MAC address (multus mode).

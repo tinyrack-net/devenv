@@ -120,15 +120,10 @@ func localSSHD(t *testing.T, host ssh.Signer, client ssh.PublicKey) string {
 	return ln.Addr().String()
 }
 
-type touches struct{ names []string }
-
-func (t *touches) Touch(n string) { t.names = append(t.names, n) }
-
 type harness struct {
 	t       *testing.T
 	c       client.Client
 	session *mcp.ClientSession
-	touched *touches
 	url     string
 }
 
@@ -166,8 +161,7 @@ func newHarness(t *testing.T) *harness {
 		Auth: &auth.PasswordAuthenticator{Username: "admin", Password: "pw"}, Sessions: sessions,
 		Capacity: &capacity.Checker{Reader: c, Namespace: "devenv"}, Dialer: dialer,
 	}
-	tc := &touches{}
-	m := &Server{API: apiSrv, Dialer: dialer, Token: testToken, DefaultIdleTimeout: time.Hour, Activity: tc}
+	m := &Server{API: apiSrv, Dialer: dialer, Token: testToken}
 	ts := httptest.NewServer(m.Handler())
 	t.Cleanup(ts.Close)
 
@@ -197,7 +191,7 @@ func newHarness(t *testing.T) *harness {
 		}
 	}()
 
-	h := &harness{t: t, c: c, touched: tc, url: ts.URL}
+	h := &harness{t: t, c: c, url: ts.URL}
 	cl := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
 	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
 		Endpoint:   ts.URL,
@@ -299,7 +293,7 @@ func TestLifecycleAndExec(t *testing.T) {
 	if isErr, text := h.call("create_environment", map[string]any{"name": "agent1", "image": "base", "memory": "2Gi"}, &created); isErr {
 		t.Fatalf("create: %s", text)
 	}
-	if created.Environment.Phase != "Running" || !created.Environment.CreatedByMCP || created.Environment.IdleTimeout != "1h0m0s" {
+	if created.Environment.Phase != "Running" || !created.Environment.CreatedByMCP {
 		t.Errorf("created = %+v", created.Environment)
 	}
 	obj := &devenvv1.DevEnvironment{}
@@ -350,10 +344,10 @@ func TestLifecycleAndExec(t *testing.T) {
 	}
 
 	var upd envOut
-	if isErr, text := h.call("update_environment", map[string]any{"name": "agent1", "cpu": "2", "idle_timeout": "off"}, &upd); isErr {
+	if isErr, text := h.call("update_environment", map[string]any{"name": "agent1", "cpu": "2"}, &upd); isErr {
 		t.Fatalf("update: %s", text)
 	}
-	if upd.Environment.Resources.CPU != "2" || upd.Environment.Resources.Memory != "2Gi" || upd.Environment.IdleTimeout != "" || upd.Note == "" {
+	if upd.Environment.Resources.CPU != "2" || upd.Environment.Resources.Memory != "2Gi" || upd.Note == "" {
 		t.Errorf("update = %+v", upd)
 	}
 
@@ -361,9 +355,6 @@ func TestLifecycleAndExec(t *testing.T) {
 	h.call("list_environments", map[string]any{"created_by_mcp_only": true}, &list)
 	if len(list.Environments) != 1 {
 		t.Errorf("list = %+v", list)
-	}
-	if len(h.touched.names) == 0 {
-		t.Error("activity not recorded")
 	}
 
 	var del deleteOut

@@ -45,12 +45,6 @@ type DevEnvironmentSpec struct {
 	// +optional
 	PasswordSecretName string `json:"passwordSecretName,omitempty"`
 
-	// IdleTimeout stops the environment after this long without activity
-	// (web terminal, desktop, SSH gateway sessions, MCP calls). Activity on a
-	// dedicated IP is not observed. Empty disables idle stop.
-	// +optional
-	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
-
 	// Ports exposed on the environment's own address in loadBalancer
 	// network mode. SSH (22) is always exposed. Ignored in other modes
 	// (multus exposes every port).
@@ -133,10 +127,6 @@ type DevEnvironmentStatus struct {
 	// NetworkMode is the effective network mode of the class.
 	// +optional
 	NetworkMode NetworkMode `json:"networkMode,omitempty"`
-
-	// LastActivityTime is the last observed activity, used for idle stop.
-	// +optional
-	LastActivityTime *metav1.Time `json:"lastActivityTime,omitempty"`
 
 	// PasswordSet reports whether password login is enabled.
 	// +optional

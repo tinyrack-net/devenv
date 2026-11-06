@@ -12,7 +12,6 @@ import {
 import { ResourceInputs } from "../components/ResourceInputs";
 import { Ports } from "../components/Ports";
 import { PasswordControl } from "../components/PasswordControl";
-import { IdleControl } from "../components/IdleControl";
 import { formatBytes, formatCPU, gib } from "../quantity";
 
 // Heavy viewers are loaded on demand.
@@ -239,11 +238,6 @@ function Detail({ env }: { env: Environment }) {
           <section className="card">
             <h2>Password</h2>
             <PasswordControl env={env} />
-          </section>
-
-          <section className="card">
-            <h2>Auto stop</h2>
-            <IdleControl env={env} />
           </section>
 
           <section className="card wide">

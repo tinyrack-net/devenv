@@ -68,8 +68,6 @@ spec:
             {{- end }}
             - name: DEVENV_MCP_ENABLED
               value: {{ .Values.mcp.enabled | quote }}
-            - name: DEVENV_MCP_DEFAULT_IDLE_TIMEOUT
-              value: {{ .Values.mcp.defaultIdleTimeout | quote }}
             {{- with .Values.mcp.existingSecret }}
             - name: DEVENV_MCP_TOKEN
               valueFrom:

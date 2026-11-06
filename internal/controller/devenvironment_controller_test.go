@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
@@ -536,79 +534,6 @@ func TestPassword(t *testing.T) {
 		}
 		return nil
 	})
-}
-
-func TestIdleStop(t *testing.T) {
-	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
-	env := f.env("dev1")
-	env.Spec.IdleTimeout = &metav1.Duration{Duration: time.Hour}
-	must(t, k8sClient.Create(testCtx, env))
-
-	pod := &corev1.Pod{}
-	eventually(t, func() error { return get(pod, f.ns, "dev1") })
-	// envtest has no kubelet: mark the pod ready so the environment runs.
-	pod.Status.Phase = corev1.PodRunning
-	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()}}
-	must(t, k8sClient.Status().Update(testCtx, pod))
-	waitPhase(t, env, devenvv1.PhaseRunning)
-
-	// Recent activity keeps it running.
-	cur := &devenvv1.DevEnvironment{}
-	must(t, get(cur, f.ns, "dev1"))
-	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now()}
-	must(t, k8sClient.Status().Update(testCtx, cur))
-	time.Sleep(time.Second)
-	must(t, get(cur, f.ns, "dev1"))
-	if !cur.IsRunning() {
-		t.Fatal("stopped despite recent activity")
-	}
-
-	// Two hours later it is idle.
-	setNow(t, time.Now().Add(2*time.Hour))
-	must(t, get(cur, f.ns, "dev1"))
-	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now().Add(-time.Minute)} // trigger a reconcile
-	must(t, k8sClient.Status().Update(testCtx, cur))
-	eventually(t, func() error {
-		e := &devenvv1.DevEnvironment{}
-		if err := get(e, f.ns, "dev1"); err != nil {
-			return err
-		}
-		if e.IsRunning() {
-			return fmt.Errorf("still running")
-		}
-		return nil
-	})
-}
-
-func TestIdleDisabled(t *testing.T) {
-	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
-	must(t, k8sClient.Create(testCtx, f.env("dev1")))
-	pod := &corev1.Pod{}
-	eventually(t, func() error { return get(pod, f.ns, "dev1") })
-	pod.Status.Phase = corev1.PodRunning
-	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()}}
-	must(t, k8sClient.Status().Update(testCtx, pod))
-	env := f.env("dev1")
-	waitPhase(t, env, devenvv1.PhaseRunning)
-
-	setNow(t, time.Now().Add(1000*time.Hour))
-	cur := &devenvv1.DevEnvironment{}
-	must(t, get(cur, f.ns, "dev1"))
-	cur.Status.LastActivityTime = &metav1.Time{Time: time.Now()}
-	must(t, k8sClient.Status().Update(testCtx, cur))
-	time.Sleep(time.Second)
-	must(t, get(cur, f.ns, "dev1"))
-	if !cur.IsRunning() {
-		t.Error("environment without idleTimeout must not stop")
-	}
-}
-
-var nowMu sync.Mutex
-
-func setNow(t *testing.T, at time.Time) {
-	nowMu.Lock()
-	now = func() time.Time { return at }
-	t.Cleanup(func() { now = time.Now; nowMu.Unlock() })
 }
 
 // updateEnv re-reads env, applies mutate and updates, retrying on conflicts

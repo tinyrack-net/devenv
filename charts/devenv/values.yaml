@@ -104,8 +104,6 @@ httpRoute:
 # -- MCP endpoint (/mcp, Streamable HTTP) for AI agents.
 mcp:
   enabled: true
-  # -- Idle timeout for environments created through MCP. "0s" disables.
-  defaultIdleTimeout: 1h
   # -- Existing Secret with key `token` used as the bearer token. When empty
   # a token is generated in the `<release>-keys` Secret (key `mcp-token`).
   existingSecret: ""

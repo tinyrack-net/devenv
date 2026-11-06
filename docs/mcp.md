@@ -24,7 +24,7 @@ key from the Secret and restart the server, or set `mcp.existingSecret` to your 
 | `list_environments` | Environments (`created_by_mcp_only` filter) |
 | `get_environment` | State, resources, address, SSH command |
 | `create_environment` | Create; waits until running by default |
-| `update_environment` | Change image, CPU, memory, disk, ports, idle timeout |
+| `update_environment` | Change image, CPU, memory, disk, ports |
 | `start_environment` / `stop_environment` | Start / stop (keeps `/home/dev`) |
 | `delete_environment` | Delete including the home volume |
 | `exec` | Run a command: `bash -lc` as `dev` |
@@ -44,16 +44,6 @@ Result: `exit_code` (-1 on timeout or signal), `stdout`, `stderr` (256 KB each; 
 omitted beyond that, `truncated: true`), `timed_out`, `duration_ms`.
 
 Each call is a new shell. At most 4 concurrent calls per environment.
-
-## Idle auto-stop
-
-Environments created through MCP get `idleTimeout` = `mcp.defaultIdleTimeout` (chart value,
-default `1h`). After that long without activity the environment is stopped (data in
-`/home/dev` is kept) and `exec` starts it again. Pass `idle_timeout: "off"` to disable it or
-a duration such as `"4h"`.
-
-Activity: MCP calls for the environment, web terminal, desktop and SSH gateway sessions.
-Direct SSH to a dedicated IP is not observed.
 
 ## Clients
 

@@ -188,7 +188,6 @@ func (s *Server) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) (*
 		return nil, execOut{}, errorf("too many concurrent exec calls for %s (max %d); wait for one to finish", in.Name, s.execLimiter.max)
 	}
 	defer s.execLimiter.release(in.Name)
-	s.touch(in.Name)
 
 	start := time.Now()
 	sc, err := s.dialWithRetry(ctx, in.Name)
@@ -218,9 +217,6 @@ func (s *Server) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) (*
 	done := make(chan error, 1)
 	go func() { done <- sess.Wait() }()
 
-	// Keep the environment marked active during long commands.
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -231,8 +227,6 @@ loop:
 		select {
 		case waitErr = <-done:
 			break loop
-		case <-ticker.C:
-			s.touch(in.Name)
 		case <-timer.C:
 			out.TimedOut = true
 			break loop

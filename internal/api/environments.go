@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,8 +107,6 @@ func (s *Server) admit(ctx context.Context, env *devenvv1.DevEnvironment, newIma
 type CreateOptions struct {
 	// Labels added to the environment.
 	Labels map[string]string
-	// IdleTimeout stops the environment after this much inactivity.
-	IdleTimeout *metav1.Duration
 }
 
 // CreateEnvironment validates and creates an environment owned by user.
@@ -159,7 +156,6 @@ func (s *Server) CreateEnvironment(ctx context.Context, user string, in CreateEn
 			Running:           ptr.To(in.Running == nil || *in.Running),
 			SSHAuthorizedKeys: keys,
 			Ports:             ports,
-			IdleTimeout:       opts.IdleTimeout,
 		},
 	}
 	// Name is set but there is no pod yet, so excluding it is harmless.
@@ -236,21 +232,6 @@ func (s *Server) UpdateEnvironment(ctx context.Context, name string, in UpdateEn
 			return nil, err
 		}
 		env.Spec.Ports = ports
-	}
-
-	if in.IdleTimeoutText != nil && in.IdleTimeout == nil {
-		var d *metav1.Duration
-		if t := strings.TrimSpace(*in.IdleTimeoutText); t != "" && t != "off" {
-			v, err := time.ParseDuration(t)
-			if err != nil || v < time.Minute {
-				return nil, badRequest("invalid idleTimeout: use a duration such as 30m or 2h (minimum 1m)")
-			}
-			d = &metav1.Duration{Duration: v}
-		}
-		in.IdleTimeout = &d
-	}
-	if in.IdleTimeout != nil {
-		env.Spec.IdleTimeout = *in.IdleTimeout
 	}
 
 	removePassword := false

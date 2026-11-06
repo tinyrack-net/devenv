@@ -35,8 +35,6 @@ type Gateway struct {
 	Dialer  *sshclient.Dialer
 	// Banner is shown before authentication. Optional.
 	Banner string
-	// Activity records sessions for idle stop. Optional.
-	Activity interface{ Touch(name string) }
 
 	log logr.Logger
 }
@@ -164,21 +162,6 @@ func (g *Gateway) handle(ctx context.Context, nConn net.Conn) {
 	}
 	defer up.Close()
 	log.Info("session started")
-	if g.Activity != nil {
-		g.Activity.Touch(envName)
-		go func() {
-			t := time.NewTicker(time.Minute)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					g.Activity.Touch(envName)
-				}
-			}
-		}()
-	}
 
 	var wg sync.WaitGroup
 	wg.Add(4)

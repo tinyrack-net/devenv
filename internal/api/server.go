@@ -2,13 +2,11 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
 	"strings"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,28 +37,6 @@ type Server struct {
 	Dialer *sshclient.Dialer
 	// SSH describes the public SSH gateway endpoint.
 	SSH SSHInfo
-	// Activity records terminal and desktop use for idle stop. Optional.
-	Activity interface{ Touch(name string) }
-}
-
-// keepActive marks an environment active now and every minute until ctx ends.
-func (s *Server) keepActive(ctx context.Context, name string) {
-	if s.Activity == nil {
-		return
-	}
-	s.Activity.Touch(name)
-	go func() {
-		t := time.NewTicker(time.Minute)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				s.Activity.Touch(name)
-			}
-		}
-	}()
 }
 
 // Handler returns the root HTTP handler.

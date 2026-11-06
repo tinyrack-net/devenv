@@ -57,17 +57,8 @@ func (r *DevEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	stopped, idleIn, err := r.checkIdle(ctx, env)
-	if err != nil || stopped {
-		// The spec change triggers a new reconcile.
-		return ctrl.Result{}, err
-	}
-
 	orig := env.DeepCopy()
 	res, err := r.reconcile(ctx, env)
-	if idleIn > 0 && !res.Requeue && (res.RequeueAfter == 0 || idleIn < res.RequeueAfter) {
-		res.RequeueAfter = idleIn
-	}
 
 	env.Status.ObservedGeneration = env.Generation
 	if !equalStatus(orig.Status, env.Status) {

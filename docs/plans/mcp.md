@@ -8,7 +8,7 @@ AI 에이전트가 MCP로 devenv 환경을 만들고, 명령을 실행하고, �
 |---|---|
 | 인증 | MCP 전용 Bearer 토큰 하나, 전체 권한(관리자와 동일) |
 | 명령 실행 | `exec`(동기 실행)만. 파일 도구·장기 실행 프로세스는 범위 밖 |
-| 수명 관리 | 유휴 시 자동 정지(데이터 유지). 삭제는 명시적으로만 |
+| 수명 관리 | ~~유휴 시 자동 정지~~ → 제거(v0.6.0). 정지·삭제는 명시적으로만 |
 | 연결 경로 | 홈랩 Bifrost에 Streamable HTTP + `Authorization` 헤더로 등록 |
 
 ## 서버 구조
@@ -28,20 +28,16 @@ AI 에이전트가 MCP로 devenv 환경을 만들고, 명령을 실행하고, �
 | `list_environments` | 환경 목록(`created_by_mcp_only` 필터) |
 | `get_environment` | 상세 + SSH 접속 정보 |
 | `create_environment` | 생성, `wait`이면 Running까지 대기(최대 5분) |
-| `update_environment` | 사양·이미지·포트·유휴 시간 변경 |
+| `update_environment` | 사양·이미지·포트 변경 |
 | `start_environment` / `stop_environment` | 시작·정지(`wait`) |
 | `delete_environment` | 삭제(홈 볼륨 포함) |
 | `exec` | `bash -lc`를 `dev`로 실행. `cwd`, `env`, `stdin`, `timeout_seconds`(기본 120, 최대 1800), `auto_start`. 결과는 `exit_code`, `stdout`, `stderr`, `timed_out`, `truncated` |
 
 `exec` 출력은 스트림별 최대 256KB(넘으면 앞·뒤를 남기고 가운데 생략). 환경당 동시 실행 4개.
 
-## 유휴 자동 정지
+## 유휴 자동 정지 (v0.6.0에서 제거)
 
-- `spec.idleTimeout`(duration), `status.lastActivityTime`.
-- 활동: MCP 도구 호출, 웹 터미널·데스크탑 연결, SSH 게이트웨이 세션(연결 중 주기적 갱신).
-- 컨트롤러가 `lastActivityTime + idleTimeout` 경과 시 `running=false`로 바꾸고 이벤트를 남긴다.
-- 기본값: MCP로 만든 환경은 `mcp.defaultIdleTimeout`(1h), 콘솔은 없음.
-- 한계: LAN IP 직접 SSH·포트 접속은 서버가 관찰하지 못한다.
+v0.5.0에서 `spec.idleTimeout`과 활동 기록으로 구현했지만 제거했다. LAN IP로 직접 하는 SSH·포트 접속을 서버가 관찰할 수 없어서, 실제로 쓰는 중인 환경을 정지시킬 수 있었기 때문이다. 정지·삭제는 사용자나 에이전트가 명시적으로 한다.
 
 ## 안전장치
 
@@ -58,16 +54,17 @@ AI 에이전트가 MCP로 devenv 환경을 만들고, 명령을 실행하고, �
 
 1. 서비스 계층 분리, 토큰 인증, `/mcp` + 조회·CRUD 도구
 2. `exec`
-3. 유휴 자동 정지
+3. 유휴 자동 정지(v0.5.0, 이후 제거)
 4. 문서, v0.5.0, 홈랩 배포·Bifrost 등록
+5. 유휴 자동 정지 제거(v0.6.0)
 
 ## 결과 (v0.5.0, 2026-11-06)
 
-- 구현: `internal/mcpserver`(도구·exec), `internal/activity`(활동 기록), 컨트롤러 `idle.go`. REST 핸들러는 `Server.CreateEnvironment` 등 공용 함수로 분리했다.
+- 구현: `internal/mcpserver`(도구·exec). REST 핸들러는 `Server.CreateEnvironment` 등 공용 함수로 분리했다.
 - 홈랩: 0.5.0 배포. Cilium에서 `bifrost-system/bifrost` → `devenv-system/devenv:8080`을 허용했다.
 - Bifrost: 클라이언트 `devenv`(code mode, headers 인증, `tools_to_execute=["*"]`)를 `POST /api/mcp/client`로 등록했다. 주소는 `http://devenv.devenv-system.svc.cluster.local/mcp`. `dev`(id 2)·`personal`(id 4) Virtual MCP에 연결했다.
 - 토큰: Secret `devenv-system/devenv-keys`의 `mcp-token`. 원본은 Bitwarden `344e14cc-213f-410a-9273-b4f700a68590`의 `DEVENV_MCP_TOKEN` 필드.
-- 검증: Bifrost code mode로 환경 생성 → `git clone` → Go 설치 → devenv 빌드(52MB) → 삭제. kind에서 유휴 2분 설정으로 자동 정지 → `exec` 자동 시작, `/home/dev` 유지를 확인했다.
+- 검증: Bifrost code mode로 환경 생성 → `git clone` → Go 설치 → devenv 빌드(52MB) → 삭제.
 
 ### 운영 메모
 

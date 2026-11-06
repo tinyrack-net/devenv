@@ -3,8 +3,6 @@ package api
 import (
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/tinyrack-net/devenv/internal/capacity"
 )
 
@@ -42,28 +40,26 @@ type Class struct {
 
 // Environment is the API representation of a DevEnvironment.
 type Environment struct {
-	Name         string         `json:"name"`
-	Owner        string         `json:"owner,omitempty"`
-	Image        string         `json:"image"`
-	Class        string         `json:"class"`
-	Resources    ResourcesInput `json:"resources"`
-	Running      bool           `json:"running"`
-	Phase        string         `json:"phase"`
-	Message      string         `json:"message,omitempty"`
-	Desktop      bool           `json:"desktop"`
-	ImageRef     string         `json:"imageRef,omitempty"`
-	NodeName     string         `json:"nodeName,omitempty"`
-	IP           string         `json:"ip,omitempty"`
-	MAC          string         `json:"mac,omitempty"`
-	NetworkMode  string         `json:"networkMode,omitempty"`
-	Ports        []PortInput    `json:"ports"`
-	PasswordSet  bool           `json:"passwordSet"`
-	IdleTimeout  string         `json:"idleTimeout,omitempty"`
-	LastActivity *time.Time     `json:"lastActivity,omitempty"`
-	SSHKeys      []string       `json:"sshAuthorizedKeys"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	Deleting     bool           `json:"deleting"`
-	ServiceName  string         `json:"serviceName,omitempty"`
+	Name        string         `json:"name"`
+	Owner       string         `json:"owner,omitempty"`
+	Image       string         `json:"image"`
+	Class       string         `json:"class"`
+	Resources   ResourcesInput `json:"resources"`
+	Running     bool           `json:"running"`
+	Phase       string         `json:"phase"`
+	Message     string         `json:"message,omitempty"`
+	Desktop     bool           `json:"desktop"`
+	ImageRef    string         `json:"imageRef,omitempty"`
+	NodeName    string         `json:"nodeName,omitempty"`
+	IP          string         `json:"ip,omitempty"`
+	MAC         string         `json:"mac,omitempty"`
+	NetworkMode string         `json:"networkMode,omitempty"`
+	Ports       []PortInput    `json:"ports"`
+	PasswordSet bool           `json:"passwordSet"`
+	SSHKeys     []string       `json:"sshAuthorizedKeys"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	Deleting    bool           `json:"deleting"`
+	ServiceName string         `json:"serviceName,omitempty"`
 }
 
 // CreateEnvironmentRequest creates an environment.
@@ -96,10 +92,6 @@ type UpdateEnvironmentRequest struct {
 	Ports     *[]PortInput    `json:"ports,omitempty"`
 	// Password sets the password; an empty string removes it.
 	Password *string `json:"password,omitempty"`
-	// IdleTimeout sets the idle stop timeout; a nil inner value disables it.
-	IdleTimeout **metav1.Duration `json:"-"`
-	// IdleTimeoutText is the console form: duration string, "" disables.
-	IdleTimeoutText *string `json:"idleTimeout,omitempty"`
 }
 
 // SSHKey is a stored public key of the user.

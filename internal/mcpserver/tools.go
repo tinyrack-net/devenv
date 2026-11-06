@@ -49,7 +49,6 @@ type Environment struct {
 	IP           string             `json:"ip,omitempty" jsonschema:"dedicated address (loadBalancer or multus classes)"`
 	Ports        []api.PortInput    `json:"ports,omitempty"`
 	CreatedByMCP bool               `json:"created_by_mcp"`
-	IdleTimeout  string             `json:"idle_timeout,omitempty"`
 	CreatedAt    time.Time          `json:"created_at"`
 	SSH          string             `json:"ssh,omitempty" jsonschema:"command to connect over SSH"`
 }
@@ -61,9 +60,6 @@ func (s *Server) view(e *devenvv1.DevEnvironment) Environment {
 		Running: a.Running, Resources: a.Resources, Desktop: a.Desktop, NetworkMode: a.NetworkMode,
 		IP: a.IP, Ports: a.Ports, CreatedAt: a.CreatedAt,
 		CreatedByMCP: e.Labels[LabelCreatedBy] == "mcp",
-	}
-	if e.Spec.IdleTimeout != nil {
-		out.IdleTimeout = e.Spec.IdleTimeout.Duration.String()
 	}
 	if a.IP != "" {
 		out.SSH = "ssh dev@" + a.IP
@@ -105,25 +101,23 @@ type waitIn struct {
 }
 
 type createIn struct {
-	Name        string          `json:"name" jsonschema:"unique name: lowercase letters, digits and '-', max 40 characters"`
-	Image       string          `json:"image" jsonschema:"image name from list_images"`
-	Class       string          `json:"class,omitempty" jsonschema:"class name from list_classes; default class when empty"`
-	CPU         string          `json:"cpu,omitempty" jsonschema:"CPU cores, e.g. 2 or 500m; image default when empty"`
-	Memory      string          `json:"memory,omitempty" jsonschema:"memory, e.g. 4Gi; image default when empty"`
-	Disk        string          `json:"disk,omitempty" jsonschema:"home volume size, e.g. 20Gi; can only grow later"`
-	Ports       []api.PortInput `json:"ports,omitempty" jsonschema:"ports to expose (loadBalancer classes only)"`
-	IdleTimeout string          `json:"idle_timeout,omitempty" jsonschema:"stop after this much inactivity, e.g. 30m or 4h; \"off\" disables; server default when empty"`
-	Wait        *bool           `json:"wait,omitempty" jsonschema:"wait until running (default true, up to 5 minutes)"`
+	Name   string          `json:"name" jsonschema:"unique name: lowercase letters, digits and '-', max 40 characters"`
+	Image  string          `json:"image" jsonschema:"image name from list_images"`
+	Class  string          `json:"class,omitempty" jsonschema:"class name from list_classes; default class when empty"`
+	CPU    string          `json:"cpu,omitempty" jsonschema:"CPU cores, e.g. 2 or 500m; image default when empty"`
+	Memory string          `json:"memory,omitempty" jsonschema:"memory, e.g. 4Gi; image default when empty"`
+	Disk   string          `json:"disk,omitempty" jsonschema:"home volume size, e.g. 20Gi; can only grow later"`
+	Ports  []api.PortInput `json:"ports,omitempty" jsonschema:"ports to expose (loadBalancer classes only)"`
+	Wait   *bool           `json:"wait,omitempty" jsonschema:"wait until running (default true, up to 5 minutes)"`
 }
 
 type updateIn struct {
-	Name        string           `json:"name" jsonschema:"environment name"`
-	Image       string           `json:"image,omitempty" jsonschema:"new image (restarts the environment)"`
-	CPU         string           `json:"cpu,omitempty" jsonschema:"new CPU (restarts the environment)"`
-	Memory      string           `json:"memory,omitempty" jsonschema:"new memory (restarts the environment)"`
-	Disk        string           `json:"disk,omitempty" jsonschema:"new home volume size; can only grow"`
-	Ports       *[]api.PortInput `json:"ports,omitempty" jsonschema:"replace exposed ports (loadBalancer classes only)"`
-	IdleTimeout string           `json:"idle_timeout,omitempty" jsonschema:"e.g. 30m, 4h or \"off\""`
+	Name   string           `json:"name" jsonschema:"environment name"`
+	Image  string           `json:"image,omitempty" jsonschema:"new image (restarts the environment)"`
+	CPU    string           `json:"cpu,omitempty" jsonschema:"new CPU (restarts the environment)"`
+	Memory string           `json:"memory,omitempty" jsonschema:"new memory (restarts the environment)"`
+	Disk   string           `json:"disk,omitempty" jsonschema:"new home volume size; can only grow"`
+	Ports  *[]api.PortInput `json:"ports,omitempty" jsonschema:"replace exposed ports (loadBalancer classes only)"`
 }
 
 type envOut struct {
@@ -205,10 +199,6 @@ func (s *Server) register(srv *mcp.Server) {
 		Name:        "create_environment",
 		Description: "Create a new development environment. By default waits until it is running (up to 5 minutes).",
 	}, logged("create_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, envOut, error) {
-		idle, err := s.idleTimeout(in.IdleTimeout)
-		if err != nil {
-			return nil, envOut{}, err
-		}
 		env, err := s.API.CreateEnvironment(ctx, Owner, api.CreateEnvironmentRequest{
 			Name:      in.Name,
 			Image:     in.Image,
@@ -217,13 +207,11 @@ func (s *Server) register(srv *mcp.Server) {
 			Ports:     in.Ports,
 			SSHKeys:   &[]string{},
 		}, api.CreateOptions{
-			Labels:      map[string]string{LabelCreatedBy: "mcp"},
-			IdleTimeout: idle,
+			Labels: map[string]string{LabelCreatedBy: "mcp"},
 		})
 		if err != nil {
 			return nil, envOut{}, userErr(err)
 		}
-		s.touch(env.Name)
 		if boolDefault(in.Wait, true) {
 			env, err = s.waitFor(ctx, env.Name, true)
 			if err != nil {
@@ -235,7 +223,7 @@ func (s *Server) register(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "update_environment",
-		Description: "Change resources, image, ports or idle timeout of an environment. Changing image or CPU/memory restarts it; files in /home/dev are kept.",
+		Description: "Change resources, image or ports of an environment. Changing image or CPU/memory restarts it; files in /home/dev are kept.",
 	}, logged("update_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, envOut, error) {
 		req := api.UpdateEnvironmentRequest{Ports: in.Ports}
 		if in.Image != "" {
@@ -259,13 +247,6 @@ func (s *Server) register(srv *mcp.Server) {
 			req.Resources = &r
 		}
 		note := ""
-		if in.IdleTimeout != "" {
-			idle, err := s.idleTimeout(in.IdleTimeout)
-			if err != nil {
-				return nil, envOut{}, err
-			}
-			req.IdleTimeout = &idle
-		}
 		env, err := s.API.UpdateEnvironment(ctx, in.Name, req)
 		if err != nil {
 			return nil, envOut{}, userErr(err)
@@ -273,7 +254,6 @@ func (s *Server) register(srv *mcp.Server) {
 		if req.Image != nil || req.Resources != nil {
 			note = "the environment restarts to apply the change; files in /home/dev are kept"
 		}
-		s.touch(env.Name)
 		return nil, envOut{Environment: s.view(env), Note: note}, nil
 	}))
 
@@ -283,7 +263,6 @@ func (s *Server) register(srv *mcp.Server) {
 			if err != nil {
 				return nil, envOut{}, userErr(err)
 			}
-			s.touch(env.Name)
 			if boolDefault(in.Wait, true) {
 				if env, err = s.waitFor(ctx, in.Name, true); err != nil {
 					return nil, envOut{}, err
