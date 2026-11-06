@@ -36,12 +36,16 @@ type Server struct {
 	execLimiter *limiter
 }
 
-const instructions = `devenv provides isolated Linux development environments (containers on Kubernetes).
-Typical workflow:
-1. list_images / list_classes to choose an image and class.
-2. create_environment with a unique name (lowercase, digits, '-'); it waits until the environment is running.
-3. exec to run shell commands (bash -lc as user "dev", home /home/dev, passwordless sudo). Files in /home/dev persist across stop/start; everything else is reset when the environment restarts.
-4. stop_environment to pause (keeps /home/dev, frees CPU and memory) or delete_environment when finished (deletes everything). exec starts a stopped environment automatically.`
+const instructions = `devenv provides isolated Linux development environments (containers on Kubernetes) for coding work.
+Workflow:
+1. create_environment with a unique name. Prefer the "agent" image when it exists (Go, Node.js/pnpm, Python/uv, gh, ripgrep preinstalled). It waits until running.
+2. Work inside it. The user is "dev" (home /home/dev, passwordless sudo). Relative paths are relative to /home/dev.
+   - Files: read_file (line numbers + offset/limit), edit_file (exact text replacement, returns a diff), write_file (new files or full rewrites), list_dir.
+   - Code search: search (ripgrep, respects .gitignore), find_files (glob).
+   - Commands: exec for commands that finish within about a minute (builds, tests, git).
+   - Long running work (dev servers, watchers, long builds/tests): start_process, then read_process_output with next_offset / wait_seconds; stop_process when done.
+3. Only /home/dev persists across stop/start; packages installed elsewhere and background processes are lost on restart.
+4. stop_environment to pause (frees CPU/memory) or delete_environment when finished. exec and the file tools start a stopped environment automatically.`
 
 // Handler returns the authenticated Streamable HTTP handler.
 func (s *Server) Handler() http.Handler {

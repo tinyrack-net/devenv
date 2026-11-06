@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -76,11 +77,21 @@ func localSSHD(t *testing.T, host ssh.Signer, client ssh.PublicKey) string {
 						var cmd *exec.Cmd
 						for r := range creqs {
 							switch r.Type {
+							case "subsystem":
+								if !strings.HasSuffix(string(r.Payload), "sftp") {
+									r.Reply(false, nil)
+									continue
+								}
+								r.Reply(true, nil)
+								srv, err := sftp.NewServer(ch)
+								if err != nil {
+									ch.Close()
+									return
+								}
+								go func() { _ = srv.Serve(); srv.Close(); ch.Close() }()
 							case "exec":
 								n := binary.BigEndian.Uint32(r.Payload)
 								line := string(r.Payload[4 : 4+n])
-								// The test machine has no /home/dev.
-								line = strings.ReplaceAll(line, "/home/dev", t.TempDir())
 								cmd = exec.Command("sh", "-c", line)
 								cmd.Stdin, cmd.Stdout, cmd.Stderr = ch, ch, ch.Stderr()
 								r.Reply(true, nil)
@@ -131,6 +142,14 @@ func q(s string) *resource.Quantity { v := resource.MustParse(s); return &v }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	// The test machine has no /home/dev: use a temp home and process dir.
+	oldHome, oldProc := homeDir, procDir
+	homeDir, procDir = t.TempDir(), t.TempDir()+"/proc"
+	t.Cleanup(func() {
+		// Kill leftover background processes started by tests.
+		_ = exec.Command("sh", "-c", `for f in `+procDir+`/*/pid; do [ -f "$f" ] && kill -KILL -- -"$(cat "$f")" 2>/dev/null; done; true`).Run()
+		homeDir, procDir = oldHome, oldProc
+	})
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = devenvv1.AddToScheme(s)

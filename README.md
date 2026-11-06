@@ -5,7 +5,8 @@ Remote development environments on Kubernetes.
 - Create, start, stop and delete development environments from a web console
 - SSH access, web terminal and VNC desktop
 - Works on any conformant cluster; dedicated IPs via Multus are optional
-- MCP endpoint so AI agents can create environments and run commands
+- MCP endpoint so AI agents can create environments and code in them: commands, file
+  read/edit/write, ripgrep search and background processes
 - Installs with a single Helm chart
 
 > Status: early development. See [docs/PLAN.md](docs/PLAN.md).

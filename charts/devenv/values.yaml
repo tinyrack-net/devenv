@@ -58,6 +58,11 @@ defaultImages:
     enabled: true
     repository: ghcr.io/tinyrack-net/devenv-desktop
     tag: ""
+  # -- Base image plus Go, Node.js (pnpm/yarn), uv and gh. Good default for AI agents.
+  agent:
+    enabled: true
+    repository: ghcr.io/tinyrack-net/devenv-agent
+    tag: ""
 
 # -- Extra DevEnvironmentClass objects: name -> spec.
 extraClasses: {}

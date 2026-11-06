@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -70,7 +69,7 @@ func buildCommand(in execIn) (string, error) {
 	}
 	cwd := in.Cwd
 	if cwd == "" {
-		cwd = "/home/dev"
+		cwd = homeDir
 	}
 	fmt.Fprintf(&b, "cd %s || exit 126; ", shellQuote(cwd))
 	b.WriteString(in.Command)
@@ -146,7 +145,8 @@ func (s *Server) registerExec(srv *mcp.Server) {
 			"Runs `bash -lc` as user dev (passwordless sudo) in /home/dev unless cwd is set. " +
 			"Each call is a fresh shell: use cwd/env or chain commands with && instead of relying on cd from earlier calls. " +
 			"Not interactive: pass input via stdin and use non-interactive flags (e.g. apt-get -y). " +
-			"Output is limited to 256KB per stream. For long running servers, start them in the background with nohup and redirect output to a file.",
+			"Output is limited to 256KB per stream. Prefer read_file/edit_file/search for files, and start_process for anything that runs longer than about a minute " +
+			"(some MCP gateways cut tool calls after 60 seconds).",
 	}, logged("exec", s.exec))
 }
 
@@ -165,39 +165,54 @@ func (s *Server) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) (*
 	if err != nil {
 		return nil, execOut{}, err
 	}
-
-	env, err := s.getEnv(ctx, in.Name)
+	sc, release, err := s.connect(ctx, in.Name, boolDefault(in.AutoStart, true))
 	if err != nil {
-		return nil, execOut{}, userErr(err)
+		return nil, execOut{}, err
+	}
+	defer release()
+	out, err := runCommand(ctx, sc, cmd, in.Stdin, timeout)
+	return nil, out, err
+}
+
+// connect makes sure the environment is running (starting it when allowed),
+// takes a concurrency slot and opens an SSH connection. release must be
+// called when done.
+func (s *Server) connect(ctx context.Context, name string, autoStart bool) (*ssh.Client, func(), error) {
+	env, err := s.getEnv(ctx, name)
+	if err != nil {
+		return nil, nil, userErr(err)
 	}
 	if env.Status.Phase != devenvv1.PhaseRunning || !env.IsRunning() {
-		if !boolDefault(in.AutoStart, true) {
-			return nil, execOut{}, errorf("environment %s is %s; start it with start_environment or pass auto_start", in.Name, env.Status.Phase)
+		if !autoStart {
+			return nil, nil, errorf("environment %s is %s; start it with start_environment or pass auto_start", name, env.Status.Phase)
 		}
 		if !env.IsRunning() {
-			if _, err := s.API.SetRunning(ctx, in.Name, true); err != nil {
-				return nil, execOut{}, userErr(err)
+			if _, err := s.API.SetRunning(ctx, name, true); err != nil {
+				return nil, nil, userErr(err)
 			}
 		}
-		if _, err := s.waitFor(ctx, in.Name, true); err != nil {
-			return nil, execOut{}, err
+		if _, err := s.waitFor(ctx, name, true); err != nil {
+			return nil, nil, err
 		}
 	}
-
-	if !s.execLimiter.acquire(in.Name) {
-		return nil, execOut{}, errorf("too many concurrent exec calls for %s (max %d); wait for one to finish", in.Name, s.execLimiter.max)
+	if !s.execLimiter.acquire(name) {
+		return nil, nil, errorf("too many concurrent calls for %s (max %d); wait for one to finish", name, s.execLimiter.max)
 	}
-	defer s.execLimiter.release(in.Name)
-
-	start := time.Now()
-	sc, err := s.dialWithRetry(ctx, in.Name)
+	sc, err := s.dialWithRetry(ctx, name)
 	if err != nil {
-		return nil, execOut{}, errorf("could not connect to environment %s: %v", in.Name, err)
+		s.execLimiter.release(name)
+		return nil, nil, errorf("could not connect to environment %s: %v", name, err)
 	}
-	defer sc.Close()
+	return sc, func() { sc.Close(); s.execLimiter.release(name) }, nil
+}
+
+// runCommand runs cmd in a new session with a timeout that kills the whole
+// process group.
+func runCommand(ctx context.Context, sc *ssh.Client, cmd, stdin string, timeout time.Duration) (execOut, error) {
+	start := time.Now()
 	sess, err := sc.NewSession()
 	if err != nil {
-		return nil, execOut{}, errorf("open session: %v", err)
+		return execOut{}, errorf("open session: %v", err)
 	}
 	defer sess.Close()
 
@@ -205,42 +220,30 @@ func (s *Server) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) (*
 	stderr := &capped{max: maxStreamBytes}
 	sess.Stdout = stdout
 	sess.Stderr = stderr
-	if in.Stdin != "" {
-		sess.Stdin = strings.NewReader(in.Stdin)
-	} else {
-		sess.Stdin = io.LimitReader(strings.NewReader(""), 0)
-	}
+	sess.Stdin = strings.NewReader(stdin)
 	if err := sess.Start(cmd); err != nil {
-		return nil, execOut{}, errorf("start command: %v", err)
+		return execOut{}, errorf("start command: %v", err)
 	}
 
 	done := make(chan error, 1)
 	go func() { done <- sess.Wait() }()
-
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	out := execOut{}
 	var waitErr error
-loop:
-	for {
-		select {
-		case waitErr = <-done:
-			break loop
-		case <-timer.C:
-			out.TimedOut = true
-			break loop
-		case <-ctx.Done():
-			out.TimedOut = true
-			break loop
-		}
+	select {
+	case waitErr = <-done:
+	case <-timer.C:
+		out.TimedOut = true
+	case <-ctx.Done():
+		out.TimedOut = true
 	}
 	if out.TimedOut {
 		// Kill the process group: signal, then closing the session hangs
 		// up the setsid'd group (SIGHUP).
 		_ = sess.Signal(ssh.SIGKILL)
 		_ = sess.Close()
-		_ = sc.Close()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -259,7 +262,7 @@ loop:
 		case errors.As(waitErr, &missing):
 			out.ExitCode = -1
 		default:
-			return nil, execOut{}, errorf("command failed: %v", waitErr)
+			return execOut{}, errorf("command failed: %v", waitErr)
 		}
 	}
 
@@ -271,7 +274,7 @@ loop:
 	if out.TimedOut {
 		out.Stderr += fmt.Sprintf("\n[devenv] command timed out after %s and was killed", timeout)
 	}
-	return nil, out, nil
+	return out, nil
 }
 
 // dialWithRetry tolerates sshd still starting right after the pod is ready.

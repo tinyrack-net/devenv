@@ -14,6 +14,12 @@ chown dev:dev /home/dev
 # Fix ownership of the top level only; deep chown on large volumes is slow.
 find /home/dev -maxdepth 1 ! -user dev -exec chown dev:dev {} + 2>/dev/null || true
 
+# sshd ignores AuthorizedKeysCommand when its path is not root owned or is
+# writable by others, which derived images can break (e.g. extracting a
+# tarball over /usr/local). Repair it so SSH keys keep working.
+chown root:root /usr/local /usr/local/bin /usr/local/bin/devenv-authorized-keys 2>/dev/null || true
+chmod go-w /usr/local /usr/local/bin /usr/local/bin/devenv-authorized-keys 2>/dev/null || true
+
 # 2. SSH host key from the environment Secret (stable across restarts).
 if [ -s /etc/devenv/ssh/ssh_host_ed25519_key ]; then
   install -m 0600 /etc/devenv/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key

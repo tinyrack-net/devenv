@@ -30,6 +30,10 @@ terminal is an SSH session and the desktop is an SSH tunnel to
 
 ## Extending the official images
 
+Keep `/usr/local` and `/usr/local/bin` owned by root and not writable by others: sshd refuses the
+`AuthorizedKeysCommand` otherwise (the entrypoint repairs this at start). Use
+`tar --no-same-owner --no-overwrite-dir` when extracting archives there.
+
 The base entrypoint sources every `/etc/devenv/entrypoint.d/*.sh` (as root)
 before starting sshd. Start long running processes in the background:
 

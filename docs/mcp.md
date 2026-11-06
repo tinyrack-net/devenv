@@ -28,6 +28,15 @@ key from the Secret and restart the server, or set `mcp.existingSecret` to your 
 | `start_environment` / `stop_environment` | Start / stop (keeps `/home/dev`) |
 | `delete_environment` | Delete including the home volume |
 | `exec` | Run a command: `bash -lc` as `dev` |
+| `read_file` | Read lines with line numbers (`offset`, `limit`) |
+| `write_file` | Create or replace a file (parents created, atomic) |
+| `edit_file` | Exact text replacement, multiple edits, returns a diff |
+| `list_dir` | Directory listing |
+| `search` | ripgrep content search (grep fallback), respects `.gitignore` |
+| `find_files` | Find files by glob |
+| `start_process` | Run a long command in the background (dev servers, builds) |
+| `read_process_output` | Output tail or new output since `next_offset`, optional wait |
+| `list_processes` / `stop_process` | Background process status / stop the process group |
 
 ### exec
 
@@ -44,6 +53,29 @@ Result: `exit_code` (-1 on timeout or signal), `stdout`, `stderr` (256 KB each; 
 omitted beyond that, `truncated: true`), `timed_out`, `duration_ms`.
 
 Each call is a new shell. At most 4 concurrent calls per environment.
+
+### Files
+
+File tools use SFTP as `dev`. Relative paths (and `~/`) resolve against `/home/dev`. `edit_file`
+requires each `old_text` to match exactly once (or `replace_all`), rejects overlapping edits,
+keeps the file mode and CRLF line endings, and writes atomically.
+
+### Background processes
+
+`start_process` detaches the command (its own process group) and logs stdout+stderr to
+`/tmp/devenv-proc/<id>/output`. Use `wait_seconds` and `wait_for` (e.g. `"listening on"`) to wait
+for readiness, and `read_process_output` with `offset: next_offset` to follow new output.
+`stop_process` sends SIGTERM then SIGKILL to the whole group. State lives in `/tmp`, so it is
+lost when the environment restarts.
+
+Some MCP gateways (e.g. Bifrost code mode) cut a tool call after 60 seconds; use background
+processes for anything longer.
+
+## Images
+
+The chart registers an `agent` image (`ghcr.io/tinyrack-net/devenv-agent`): the base image plus
+Go, Node.js with corepack (pnpm, yarn), Python with uv and the GitHub CLI. ripgrep and fd are in
+every official image.
 
 ## Clients
 

@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       bash-completion locales tzdata tini procps iproute2 iputils-ping \
       dnsutils netcat-openbsd htop tmux unzip zip xz-utils jq build-essential \
       python3 python3-pip python3-venv openssh-client gnupg lsb-release \
+      ripgrep fd-find file patch \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
