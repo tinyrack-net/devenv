@@ -37,6 +37,11 @@ type DevEnvironmentReconciler struct {
 	// GatewayAuthorizedKey is the public key the devenv server uses to connect
 	// to environments (SSH gateway, web terminal, VNC tunnel). Optional.
 	GatewayAuthorizedKey string
+	// HelperImage is mounted read-only at /opt/devenv as an image volume to
+	// provide devenv-agent. Empty disables it.
+	HelperImage string
+	// HelperImagePullPolicy for the helper image volume.
+	HelperImagePullPolicy corev1.PullPolicy
 }
 
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironments,verbs=get;list;watch;create;update;patch;delete
@@ -306,6 +311,7 @@ func (r *DevEnvironmentReconciler) ensureStopped(ctx context.Context, env *deven
 
 func (r *DevEnvironmentReconciler) ensureRunning(ctx context.Context, rs *resolved) (ctrl.Result, error) {
 	env := rs.env
+	rs.helperImage, rs.helperPullPolicy = r.HelperImage, r.HelperImagePullPolicy
 	desired, err := rs.desiredPod()
 	if err != nil {
 		setPhase(env, devenvv1.PhaseFailed, "InvalidPodSpec", err.Error())

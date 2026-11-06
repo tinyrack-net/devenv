@@ -39,11 +39,17 @@ const (
 	HostPublicKeyFile  = "ssh_host_ed25519_key.pub"
 )
 
+// HelperMountPath is where the helper image is mounted in environments.
+const HelperMountPath = "/opt/devenv"
+
 // resolved holds everything needed to render child objects.
 type resolved struct {
 	env   *devenvv1.DevEnvironment
 	image *devenvv1.DevImage
 	class *devenvv1.DevEnvironmentClass
+
+	helperImage      string
+	helperPullPolicy corev1.PullPolicy
 }
 
 func podName(env *devenvv1.DevEnvironment) string     { return env.Name }
@@ -224,6 +230,14 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 	}
 	if errs := validation.IsDNS1123Label(env.Name); len(errs) == 0 {
 		pod.Spec.Hostname = env.Name
+	}
+
+	if r.helperImage != "" {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: "devenv-helper", VolumeSource: corev1.VolumeSource{
+			Image: &corev1.ImageVolumeSource{Reference: r.helperImage, PullPolicy: r.helperPullPolicy},
+		}})
+		c := &pod.Spec.Containers[0]
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "devenv-helper", MountPath: HelperMountPath, ReadOnly: true})
 	}
 
 	if r.networkMode() == devenvv1.NetworkModeMultus {

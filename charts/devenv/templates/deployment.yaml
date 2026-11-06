@@ -66,6 +66,10 @@ spec:
                   name: {{ include "devenv.authSecretName" . }}
                   key: password
             {{- end }}
+            # The server image also carries devenv-agent; environments mount
+            # it read-only at /opt/devenv (image volume).
+            - name: DEVENV_HELPER_IMAGE
+              value: {{ if .Values.helper.enabled }}{{ include "devenv.image" . | quote }}{{ else }}""{{ end }}
             - name: DEVENV_MCP_ENABLED
               value: {{ .Values.mcp.enabled | quote }}
             {{- with .Values.mcp.existingSecret }}

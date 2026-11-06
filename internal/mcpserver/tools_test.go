@@ -4,10 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tinyrack-net/devenv/internal/agent"
 )
 
 // newEnvHarness creates a running MCP environment "w".
@@ -128,18 +131,16 @@ func TestSearchAndFind(t *testing.T) {
 		os.MkdirAll(filepath.Dir(filepath.Join(homeDir, p)), 0o755)
 		os.WriteFile(filepath.Join(homeDir, p), []byte(c), 0o644)
 	}
-	// rg needs a git repo to apply .gitignore.
-	exec.Command("git", "-C", filepath.Join(homeDir, "repo"), "init", "-q").Run()
 
 	var s searchOut
 	if isErr, text := h.call("search", map[string]any{"name": "w", "pattern": "hello", "path": "repo", "ignore_case": true, "glob": "*.go"}, &s); isErr {
 		t.Fatalf("search: %s", text)
 	}
 	if !strings.Contains(s.Results, "a.go:2:func Hello() {}") || !strings.Contains(s.Results, "sub/b.go:2:// hello world") {
-		t.Errorf("search results = %q (engine %s)", s.Results, s.Engine)
+		t.Errorf("search results = %q", s.Results)
 	}
-	if s.Engine == "rg" && strings.Contains(s.Results, "ignored/") {
-		t.Errorf("rg should respect .gitignore: %q", s.Results)
+	if strings.Contains(s.Results, "ignored/") {
+		t.Errorf("search should respect .gitignore: %q", s.Results)
 	}
 	if strings.Contains(s.Results, ".git/") || strings.Contains(s.Results, "node_modules") {
 		t.Errorf("search must skip .git and node_modules: %q", s.Results)
@@ -157,7 +158,7 @@ func TestSearchAndFind(t *testing.T) {
 	if s.Count != 0 || s.Results != "" {
 		t.Errorf("no match = %+v", s)
 	}
-	if isErr, text := h.call("search", map[string]any{"name": "w", "pattern": "(", "path": "repo"}, nil); !isErr || !strings.Contains(text, "search failed") {
+	if isErr, text := h.call("search", map[string]any{"name": "w", "pattern": "(", "path": "repo"}, nil); !isErr || !strings.Contains(text, "invalid regular expression") {
 		t.Errorf("bad regex: %v %s", isErr, text)
 	}
 
@@ -172,7 +173,7 @@ func TestSearchAndFind(t *testing.T) {
 func TestProcesses(t *testing.T) {
 	h := newEnvHarness(t)
 
-	var st startProcOut
+	var st agent.Output
 	if isErr, text := h.call("start_process", map[string]any{"name": "w", "id": "server",
 		"command": "echo starting; sleep 1; echo 'listening on :8080'; sleep 60", "wait_seconds": 10, "wait_for": "listening on"}, &st); isErr {
 		t.Fatalf("start: %s", text)
@@ -184,7 +185,7 @@ func TestProcesses(t *testing.T) {
 		t.Errorf("duplicate id: %v %s", isErr, text)
 	}
 
-	var rd readProcOut
+	var rd agent.Output
 	h.call("read_process_output", map[string]any{"name": "w", "id": "server"}, &rd)
 	if !strings.Contains(rd.Output, "starting") || rd.NextOffset == 0 {
 		t.Errorf("read tail = %+v", rd)
@@ -201,21 +202,21 @@ func TestProcesses(t *testing.T) {
 		t.Errorf("job = %+v", st)
 	}
 
-	var ls listProcOut
+	var ls agent.ProcessList
 	h.call("list_processes", map[string]any{"name": "w"}, &ls)
 	if len(ls.Processes) != 2 {
 		t.Errorf("list = %+v", ls)
 	}
 
-	var stop startProcOut
+	var stop agent.Output
 	start := time.Now()
 	h.call("stop_process", map[string]any{"name": "w", "id": "server", "remove": true}, &stop)
 	if stop.Process.Running || time.Since(start) > 10*time.Second {
 		t.Errorf("stop = %+v after %v", stop.Process, time.Since(start))
 	}
 	pid := stop.Process.PID
-	if pid > 0 && exec.Command("kill", "-0", "--", "-"+strconv.Itoa(pid)).Run() == nil {
-		t.Errorf("process group %d still alive", pid)
+	if pid > 0 && exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil {
+		t.Errorf("process %d still alive", pid)
 	}
 	h.call("list_processes", map[string]any{"name": "w"}, &ls)
 	if len(ls.Processes) != 1 || ls.Processes[0].ID != "job" {

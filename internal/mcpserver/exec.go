@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/tinyrack-net/devenv/internal/agent"
 	"golang.org/x/crypto/ssh"
 
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
@@ -38,6 +40,8 @@ type execIn struct {
 
 type execOut struct {
 	ExitCode   int    `json:"exit_code" jsonschema:"process exit code; -1 when killed by timeout or signal"`
+	Signal     string `json:"signal,omitempty" jsonschema:"signal that ended the process, e.g. KILL or SEGV"`
+	OOMKilled  bool   `json:"oom_killed,omitempty" jsonschema:"killed for exceeding the environment's memory limit"`
 	Stdout     string `json:"stdout"`
 	Stderr     string `json:"stderr"`
 	TimedOut   bool   `json:"timed_out"`
@@ -52,8 +56,9 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// buildCommand wraps the user command so it runs in its own process group
-// (setsid), letting the timeout kill everything it started.
+// buildCommand builds the fallback shell command (no helper). It must not
+// use setsid: sshd already starts commands as session leaders, so setsid
+// would fork and the exit code would be lost.
 func buildCommand(in execIn) (string, error) {
 	var b strings.Builder
 	keys := make([]string, 0, len(in.Env))
@@ -74,7 +79,7 @@ func buildCommand(in execIn) (string, error) {
 	fmt.Fprintf(&b, "cd %s || exit 126; ", shellQuote(cwd))
 	b.WriteString(in.Command)
 	// bash -lc: login shell so PATH from profile files applies.
-	return "exec setsid bash -lc " + shellQuote(b.String()), nil
+	return "exec bash -lc " + shellQuote(b.String()), nil
 }
 
 // capped keeps the head and tail of a stream when it exceeds max bytes.
@@ -157,19 +162,55 @@ func (s *Server) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) (*
 	if len(in.Stdin) > maxStdinBytes {
 		return nil, execOut{}, errorf("stdin is larger than %d bytes", maxStdinBytes)
 	}
+	for k := range in.Env {
+		if !envNameRe.MatchString(k) {
+			return nil, execOut{}, errorf("invalid environment variable name %q", k)
+		}
+	}
 	timeout := defaultExecTimeout
 	if in.TimeoutSeconds > 0 {
 		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxExecTimeout)
 	}
-	cmd, err := buildCommand(in)
-	if err != nil {
-		return nil, execOut{}, err
-	}
+	restartsBefore := s.podRestarts(ctx, in.Name)
 	sc, release, err := s.connect(ctx, in.Name, boolDefault(in.AutoStart, true))
 	if err != nil {
 		return nil, execOut{}, err
 	}
 	defer release()
+
+	cwd := in.Cwd
+	if cwd == "" {
+		cwd = homeDir
+	}
+	// The helper runs the command in its own process group: exact exit
+	// codes, timeouts that kill the whole tree, and OOM detection.
+	res, err := callHelper[agent.ExecResult](ctx, sc, "exec", agent.ExecRequest{
+		Command: in.Command, Cwd: cwd, Env: in.Env, Stdin: in.Stdin,
+		TimeoutMs: timeout.Milliseconds(), MaxOutput: maxStreamBytes,
+	}, timeout+30*time.Second)
+	if err == nil {
+		return nil, execOut{
+			ExitCode: res.ExitCode, Signal: res.Signal, Stdout: res.Stdout, Stderr: res.Stderr,
+			TimedOut: res.TimedOut, Truncated: res.Truncated, OOMKilled: res.OOMKilled, DurationMs: res.DurationMs,
+		}, nil
+	}
+	if !errors.Is(err, errNoHelper) {
+		// The session can die because the whole container was killed (memory
+		// limit of the environment reached). Report that precisely.
+		if reason := s.containerRestarted(ctx, in.Name, restartsBefore); reason != "" {
+			s.pool().Forget(in.Name)
+			return nil, execOut{ExitCode: -1, Signal: "KILL", OOMKilled: reason == "OOMKilled",
+				Stderr: fmt.Sprintf("[devenv] the environment was restarted while the command ran (%s); "+
+					"processes were stopped, /home/dev is kept. %s", reason, restartHint(reason))}, nil
+		}
+		return nil, execOut{}, err
+	}
+	// Fallback without the helper: plain shell. Exit codes are exact, but a
+	// timeout only ends the session, not processes the command detached.
+	cmd, err := buildCommand(in)
+	if err != nil {
+		return nil, execOut{}, err
+	}
 	out, err := runCommand(ctx, sc, cmd, in.Stdin, timeout)
 	return nil, out, err
 }
@@ -198,12 +239,12 @@ func (s *Server) connect(ctx context.Context, name string, autoStart bool) (*ssh
 	if !s.execLimiter.acquire(name) {
 		return nil, nil, errorf("too many concurrent calls for %s (max %d); wait for one to finish", name, s.execLimiter.max)
 	}
-	sc, err := s.dialWithRetry(ctx, name)
+	lease, err := s.leaseWithRetry(ctx, name)
 	if err != nil {
 		s.execLimiter.release(name)
 		return nil, nil, errorf("could not connect to environment %s: %v", name, err)
 	}
-	return sc, func() { sc.Close(); s.execLimiter.release(name) }, nil
+	return lease.Client, func() { lease.Release(); s.execLimiter.release(name) }, nil
 }
 
 // runCommand runs cmd in a new session with a timeout that kills the whole
@@ -277,11 +318,11 @@ func runCommand(ctx context.Context, sc *ssh.Client, cmd, stdin string, timeout 
 	return out, nil
 }
 
-// dialWithRetry tolerates sshd still starting right after the pod is ready.
-func (s *Server) dialWithRetry(ctx context.Context, name string) (*ssh.Client, error) {
+// leaseWithRetry tolerates sshd still starting right after the pod is ready.
+func (s *Server) leaseWithRetry(ctx context.Context, name string) (*sshclient.Lease, error) {
 	var lastErr error
 	for attempt := 0; attempt < 6; attempt++ {
-		c, err := s.Dialer.Dial(ctx, name)
+		c, err := s.pool().Get(ctx, name)
 		if err == nil {
 			return c, nil
 		}
@@ -292,4 +333,43 @@ func (s *Server) dialWithRetry(ctx context.Context, name string) (*ssh.Client, e
 		time.Sleep(time.Second)
 	}
 	return nil, lastErr
+}
+
+// podRestarts returns the environment container's restart count (-1 unknown).
+func (s *Server) podRestarts(ctx context.Context, name string) int32 {
+	st := s.containerStatus(ctx, name)
+	if st == nil {
+		return -1
+	}
+	return st.RestartCount
+}
+
+// containerRestarted returns the last termination reason when the container
+// restarted since before (e.g. "OOMKilled"), or "".
+func (s *Server) containerRestarted(ctx context.Context, name string, before int32) string {
+	if before < 0 {
+		return ""
+	}
+	// The kubelet reports the restart shortly after the kill.
+	for i := 0; i < 10; i++ {
+		if st := s.containerStatus(ctx, name); st != nil && st.RestartCount > before {
+			if t := st.LastTerminationState.Terminated; t != nil && t.Reason != "" {
+				return t.Reason
+			}
+			return "restarted"
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return ""
+}
+
+func restartHint(reason string) string {
+	if reason == "OOMKilled" {
+		return "It exceeded the environment's memory limit: raise memory with update_environment or use less memory."
+	}
+	return ""
 }

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -94,6 +95,8 @@ func localSSHD(t *testing.T, host ssh.Signer, client ssh.PublicKey) string {
 								line := string(r.Payload[4 : 4+n])
 								cmd = exec.Command("sh", "-c", line)
 								cmd.Stdin, cmd.Stdout, cmd.Stderr = ch, ch, ch.Stderr()
+								// Like OpenSSH: the command is a session leader.
+								cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 								r.Reply(true, nil)
 								if err := cmd.Start(); err != nil {
 									ch.Close()
@@ -131,6 +134,25 @@ func localSSHD(t *testing.T, host ssh.Signer, client ssh.PublicKey) string {
 	return ln.Addr().String()
 }
 
+var helperBin string
+
+// buildHelper compiles devenv-agent once per test binary.
+func buildHelper(t *testing.T) string {
+	t.Helper()
+	if helperBin == "" {
+		dir, err := os.MkdirTemp("", "devenv-agent-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bin := dir + "/devenv-agent"
+		if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/devenv-agent").CombinedOutput(); err != nil {
+			t.Fatalf("build helper: %v\n%s", err, out)
+		}
+		helperBin = bin
+	}
+	return helperBin
+}
+
 type harness struct {
 	t       *testing.T
 	c       client.Client
@@ -142,13 +164,16 @@ func q(s string) *resource.Quantity { v := resource.MustParse(s); return &v }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	// The test machine has no /home/dev: use a temp home and process dir.
-	oldHome, oldProc := homeDir, procDir
-	homeDir, procDir = t.TempDir(), t.TempDir()+"/proc"
+	// The test machine has no /home/dev and no /opt/devenv: use a temp home
+	// and the helper built from this tree. A private TMPDIR isolates the
+	// helper daemon of each test.
+	oldHome, oldHelper := homeDir, helperPath
+	homeDir, helperPath = t.TempDir(), buildHelper(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 	t.Cleanup(func() {
-		// Kill leftover background processes started by tests.
-		_ = exec.Command("sh", "-c", `for f in `+procDir+`/*/pid; do [ -f "$f" ] && kill -KILL -- -"$(cat "$f")" 2>/dev/null; done; true`).Run()
-		homeDir, procDir = oldHome, oldProc
+		_ = exec.Command("pkill", "-f", helperPath+" daemon").Run()
+		homeDir, helperPath = oldHome, oldHelper
 	})
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
@@ -338,9 +363,19 @@ func TestLifecycleAndExec(t *testing.T) {
 	}
 
 	start := time.Now()
-	h.call("exec", map[string]any{"name": "agent1", "command": "sleep 30", "timeout_seconds": 1}, &out)
+	marker := homeDir + "/child.pid"
+	h.call("exec", map[string]any{"name": "agent1", "command": "sleep 300 & echo $! > " + marker + "; sleep 300", "timeout_seconds": 1}, &out)
 	if !out.TimedOut || out.ExitCode != -1 || time.Since(start) > 10*time.Second {
 		t.Errorf("timeout = %+v after %v", out, time.Since(start))
+	}
+	// Regression: the timeout must kill the command and its children.
+	time.Sleep(300 * time.Millisecond)
+	if b, err := os.ReadFile(marker); err == nil {
+		if exec.Command("kill", "-0", strings.TrimSpace(string(b))).Run() == nil {
+			t.Errorf("child %s survived the timeout", strings.TrimSpace(string(b)))
+		}
+	} else {
+		t.Errorf("marker: %v", err)
 	}
 
 	h.call("exec", map[string]any{"name": "agent1", "command": "head -c 600000 /dev/zero | tr '\\0' a"}, &out)
@@ -388,7 +423,7 @@ func TestBuildCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(cmd, "exec setsid bash -lc ") {
+	if !strings.HasPrefix(cmd, "exec bash -lc ") {
 		t.Fatalf("cmd = %s", cmd)
 	}
 	// Quoting must survive a real shell.

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -81,6 +82,7 @@ func main() {
 		sshPublicHost   string
 		sshPublicPort   int
 		mcpEnabled      bool
+		helperImage     string
 		leaderElect     bool
 		envNamespace    string
 		leaderNamespace string
@@ -96,6 +98,7 @@ func main() {
 	flag.StringVar(&sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
 	flag.StringVar(&sshPublicHost, "ssh-public-host", envOr("DEVENV_SSH_PUBLIC_HOST", ""), "Host users connect to for SSH. Empty uses the web console host.")
 	flag.IntVar(&sshPublicPort, "ssh-public-port", envInt("DEVENV_SSH_PUBLIC_PORT", 2222), "Port users connect to for SSH.")
+	flag.StringVar(&helperImage, "helper-image", envOr("DEVENV_HELPER_IMAGE", ""), "Image mounted into environments at /opt/devenv to provide devenv-agent (usually the server image). Empty disables the helper.")
 	flag.BoolVar(&mcpEnabled, "mcp", envOr("DEVENV_MCP_ENABLED", "true") == "true", "Serve the MCP endpoint at /mcp.")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"),
@@ -152,7 +155,9 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("devenv"),
 
-		GatewayAuthorizedKey: serverKeys.ClientAuthorizedKey(),
+		GatewayAuthorizedKey:  serverKeys.ClientAuthorizedKey(),
+		HelperImage:           helperImage,
+		HelperImagePullPolicy: corev1.PullIfNotPresent,
 	}).SetupWithManager(mgr); err != nil {
 		exit(err, "setup controller")
 	}

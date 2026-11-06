@@ -106,6 +106,12 @@ httpRoute:
   parentRefs: []
   hostnames: []
 
+# -- Mount the devenv-agent helper into environments (image volume of the
+# server image at /opt/devenv). Needs the ImageVolume feature (Kubernetes
+# 1.35+, on by default). MCP exec, background processes and search use it.
+helper:
+  enabled: true
+
 # -- MCP endpoint (/mcp, Streamable HTTP) for AI agents.
 mcp:
   enabled: true

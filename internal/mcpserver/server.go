@@ -8,13 +8,18 @@
 package mcpserver
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/tinyrack-net/devenv/internal/api"
+	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
@@ -33,7 +38,20 @@ type Server struct {
 	Token   string
 	Version string
 
+	// Pool reuses SSH connections to environments. Created on demand.
+	Pool *sshclient.Pool
+
 	execLimiter *limiter
+	poolOnce    sync.Once
+}
+
+func (s *Server) pool() *sshclient.Pool {
+	s.poolOnce.Do(func() {
+		if s.Pool == nil {
+			s.Pool = &sshclient.Pool{Dialer: s.Dialer}
+		}
+	})
+	return s.Pool
 }
 
 const instructions = `devenv provides isolated Linux development environments (containers on Kubernetes) for coding work.
@@ -75,4 +93,18 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// containerStatus returns the environment container status, or nil.
+func (s *Server) containerStatus(ctx context.Context, name string) *corev1.ContainerStatus {
+	pod := &corev1.Pod{}
+	if err := s.API.Reader.Get(ctx, client.ObjectKey{Namespace: s.API.Namespace, Name: name}, pod); err != nil {
+		return nil
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == controller.ContainerName {
+			return &pod.Status.ContainerStatuses[i]
+		}
+	}
+	return nil
 }

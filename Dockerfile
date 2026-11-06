@@ -21,10 +21,15 @@ COPY internal/ internal/
 COPY web/embed.go web/embed.go
 COPY --from=web /src/web/dist web/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/devenv ./cmd/devenv
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/devenv ./cmd/devenv \
+ && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/devenv-agent ./cmd/devenv-agent
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/devenv /devenv
+# Environments mount this image at /opt/devenv (image volume), so the helper
+# is available there as /opt/devenv/bin/devenv-agent.
+COPY --from=build /out/devenv-agent /bin/devenv-agent
 USER 65532:65532
 EXPOSE 8080 2222
 ENTRYPOINT ["/devenv"]
