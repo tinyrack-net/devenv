@@ -46,7 +46,11 @@ spec:
             - name: DEVENV_HTTP_ADDR
               value: ":8080"
             - name: DEVENV_SSH_ADDR
-              value: ":2222"
+              value: {{ if .Values.sshService.enabled }}":2222"{{ else }}""{{ end }}
+            - name: DEVENV_SSH_PUBLIC_HOST
+              value: {{ .Values.sshService.publicHost | quote }}
+            - name: DEVENV_SSH_PUBLIC_PORT
+              value: {{ .Values.sshService.publicPort | default (ternary .Values.sshService.nodePort .Values.sshService.port (and (eq .Values.sshService.type "NodePort") (not (empty .Values.sshService.nodePort)))) | quote }}
             - name: DEVENV_AUTH_MODE
               value: {{ .Values.auth.mode | quote }}
             - name: DEVENV_ADMIN_USERNAME

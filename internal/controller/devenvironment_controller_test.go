@@ -163,8 +163,8 @@ func TestCreatesChildren(t *testing.T) {
 
 	svc := &corev1.Service{}
 	must(t, get(svc, f.ns, "dev1"))
-	if len(svc.Spec.Ports) != 2 {
-		t.Errorf("desktop image should expose ssh and vnc, got %d ports", len(svc.Spec.Ports))
+	if len(svc.Spec.Ports) != 1 || svc.Spec.Ports[0].Port != SSHPort {
+		t.Errorf("only ssh should be exposed (vnc is tunneled), got %+v", svc.Spec.Ports)
 	}
 
 	cur := waitPhase(t, env, devenvv1.PhaseStarting)

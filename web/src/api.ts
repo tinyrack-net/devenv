@@ -10,6 +10,13 @@ export interface Info {
   authMode: "password" | "none";
   namespace: string;
   version: string;
+  ssh: {
+    enabled: boolean;
+    host?: string;
+    port: number;
+    hostKey?: string;
+    fingerprint?: string;
+  };
 }
 
 export interface User {

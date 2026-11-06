@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -134,14 +135,7 @@ func (r *resolved) desiredService() *corev1.Service {
 		TargetPort: intstr.FromInt32(SSHPort),
 		Protocol:   corev1.ProtocolTCP,
 	}}
-	if r.image.Spec.Desktop {
-		ports = append(ports, corev1.ServicePort{
-			Name:       "vnc",
-			Port:       VNCPort,
-			TargetPort: intstr.FromInt32(VNCPort),
-			Protocol:   corev1.ProtocolTCP,
-		})
-	}
+	// VNC is reached through an SSH tunnel and listens on localhost only.
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName(r.env),
@@ -171,9 +165,6 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 	}
 
 	ports := []corev1.ContainerPort{{Name: "ssh", ContainerPort: SSHPort, Protocol: corev1.ProtocolTCP}}
-	if r.image.Spec.Desktop {
-		ports = append(ports, corev1.ContainerPort{Name: "vnc", ContainerPort: VNCPort, Protocol: corev1.ProtocolTCP})
-	}
 
 	podLabels := labels(env, "workspace")
 	sched := r.class.Spec.Scheduling
@@ -202,6 +193,7 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 				Env: []corev1.EnvVar{
 					{Name: "DEVENV_NAME", Value: env.Name},
 					{Name: "DEVENV_OWNER", Value: env.Spec.Owner},
+					{Name: "DEVENV_DESKTOP", Value: strconv.FormatBool(r.image.Spec.Desktop)},
 				},
 				Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
 				VolumeMounts: []corev1.VolumeMount{

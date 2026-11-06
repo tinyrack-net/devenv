@@ -54,6 +54,10 @@ defaultImages:
     enabled: true
     repository: ghcr.io/tinyrack-net/devenv-base
     tag: ""
+  desktop:
+    enabled: true
+    repository: ghcr.io/tinyrack-net/devenv-desktop
+    tag: ""
 
 # -- Extra DevEnvironmentClass objects: name -> spec.
 extraClasses: {}
@@ -69,11 +73,17 @@ service:
 # -- SSH gateway service (ssh -p <port> <env>@<host>).
 sshService:
   enabled: true
+  # -- Host users connect to, shown in the console. Empty = console host.
+  publicHost: ""
+  # -- Port users connect to. Defaults to `port` (or nodePort for NodePort).
+  publicPort: null
   type: ClusterIP
   port: 2222
   # -- Fixed nodePort when type is NodePort.
   nodePort: null
   loadBalancerClass: ""
+  # -- Local preserves client source IPs (LoadBalancer/NodePort only).
+  externalTrafficPolicy: ""
   annotations: {}
   labels: {}
 

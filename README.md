@@ -7,7 +7,21 @@ Remote development environments on Kubernetes.
 - Works on any conformant cluster; dedicated IPs via Multus are optional
 - Installs with a single Helm chart
 
-> Status: early development (M2). See [docs/PLAN.md](docs/PLAN.md).
+> Status: early development. See [docs/PLAN.md](docs/PLAN.md).
+
+## Install
+
+```sh
+helm install devenv oci://ghcr.io/tinyrack-net/charts/devenv -n devenv-system --create-namespace
+kubectl -n devenv-system get secret devenv-auth -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl -n devenv-system port-forward svc/devenv 8080:80   # http://localhost:8080
+```
+
+Expose the console with `ingress.*` or `httpRoute.*`, and the SSH gateway with
+`sshService.type=LoadBalancer` (or `NodePort`). Then connect with
+`ssh -p 2222 <environment>@<host>`.
+
+See [docs/images.md](docs/images.md) to build your own environment images.
 
 ## Development
 

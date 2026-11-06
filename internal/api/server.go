@@ -14,6 +14,7 @@ import (
 
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages,verbs=get;list;watch;create;update;patch;delete
@@ -32,6 +33,10 @@ type Server struct {
 	// Static serves the SPA. May be nil.
 	Static  fs.FS
 	Version string
+	// Dialer connects to environments for the web terminal and VNC.
+	Dialer *sshclient.Dialer
+	// SSH describes the public SSH gateway endpoint.
+	SSH SSHInfo
 }
 
 // Handler returns the root HTTP handler.
@@ -56,6 +61,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/environments/{name}/start", s.startEnvironment)
 	api.HandleFunc("POST /api/v1/environments/{name}/stop", s.stopEnvironment)
 	api.HandleFunc("GET /api/v1/environments/{name}/events", s.environmentEvents)
+	api.HandleFunc("GET /api/v1/environments/{name}/terminal", s.terminal)
+	api.HandleFunc("GET /api/v1/environments/{name}/vnc", s.vnc)
 
 	api.HandleFunc("GET /api/v1/sshkeys", s.listSSHKeys)
 	api.HandleFunc("POST /api/v1/sshkeys", s.createSSHKey)
@@ -106,7 +113,7 @@ func spaHandler(static fs.FS) http.Handler {
 }
 
 func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, Info{AuthMode: s.Auth.Mode(), Namespace: s.Namespace, Version: s.Version})
+	writeJSON(w, http.StatusOK, Info{AuthMode: s.Auth.Mode(), Namespace: s.Namespace, Version: s.Version, SSH: s.SSH})
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {

@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -22,8 +24,10 @@ import (
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
 	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/gateway"
 	"github.com/tinyrack-net/devenv/internal/keys"
 	"github.com/tinyrack-net/devenv/internal/server"
+	"github.com/tinyrack-net/devenv/internal/sshclient"
 	"github.com/tinyrack-net/devenv/web"
 )
 
@@ -40,6 +44,15 @@ func init() {
 func envOr(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v, ok := os.LookupEnv(key); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -62,6 +75,9 @@ func main() {
 		metricsAddr     string
 		probeAddr       string
 		httpAddr        string
+		sshAddr         string
+		sshPublicHost   string
+		sshPublicPort   int
 		leaderElect     bool
 		envNamespace    string
 		leaderNamespace string
@@ -74,6 +90,9 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address. \"0\" disables it.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8082", "Health probe endpoint address.")
 	flag.StringVar(&httpAddr, "http-bind-address", envOr("DEVENV_HTTP_ADDR", ":8080"), "API and web console address. Empty disables it.")
+	flag.StringVar(&sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
+	flag.StringVar(&sshPublicHost, "ssh-public-host", envOr("DEVENV_SSH_PUBLIC_HOST", ""), "Host users connect to for SSH. Empty uses the web console host.")
+	flag.IntVar(&sshPublicPort, "ssh-public-port", envInt("DEVENV_SSH_PUBLIC_PORT", 2222), "Port users connect to for SSH.")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"),
 		"Namespace where environments live.")
@@ -134,6 +153,19 @@ func main() {
 		exit(err, "setup controller")
 	}
 
+	// Environment connections read the environment and its Secret through the
+	// cache (namespaced to the environment namespace).
+	dialer := &sshclient.Dialer{
+		Client:    mgr.GetClient(),
+		Namespace: envNamespace,
+		Signer:    serverKeys.ClientKey,
+	}
+	if sshAddr != "" {
+		if err := mgr.Add(&gateway.Gateway{Addr: sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer}); err != nil {
+			exit(err, "add ssh gateway")
+		}
+	}
+
 	if httpAddr != "" {
 		var authenticator auth.Authenticator
 		switch authMode {
@@ -166,7 +198,15 @@ func main() {
 			Sessions:  sessions,
 			Capacity:  &capacity.Checker{Reader: reader, Namespace: envNamespace},
 			Static:    web.Dist(),
-			Version:   version,
+			Dialer:    dialer,
+			SSH: api.SSHInfo{
+				Enabled:     sshAddr != "",
+				Host:        sshPublicHost,
+				Port:        sshPublicPort,
+				HostKey:     strings.TrimSpace(string(ssh.MarshalAuthorizedKey(serverKeys.HostKey.PublicKey()))),
+				Fingerprint: ssh.FingerprintSHA256(serverKeys.HostKey.PublicKey()),
+			},
+			Version: version,
 		}
 		if srv.Static == nil {
 			log.Info("web console assets not embedded; serving API only")

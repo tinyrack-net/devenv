@@ -33,6 +33,24 @@ spec:
     cpu: "2"
     memory: 4Gi
 {{- end }}
+{{- if and .Values.defaultImages.create .Values.defaultImages.desktop.enabled }}
+---
+apiVersion: devenv.tinyrack.net/v1alpha1
+kind: DevImage
+metadata:
+  name: desktop
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  image: {{ printf "%s:%s" .Values.defaultImages.desktop.repository (default .Chart.AppVersion .Values.defaultImages.desktop.tag) }}
+  displayName: Ubuntu 24.04 + XFCE
+  description: Desktop environment in the browser (VNC)
+  desktop: true
+  defaultResources:
+    cpu: "2"
+    memory: 4Gi
+{{- end }}
 {{- range $name, $spec := .Values.extraImages }}
 ---
 apiVersion: devenv.tinyrack.net/v1alpha1

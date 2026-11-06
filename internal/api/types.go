@@ -107,9 +107,21 @@ type Event struct {
 
 // Info describes the server.
 type Info struct {
-	AuthMode  string `json:"authMode"`
-	Namespace string `json:"namespace"`
-	Version   string `json:"version"`
+	AuthMode  string  `json:"authMode"`
+	Namespace string  `json:"namespace"`
+	Version   string  `json:"version"`
+	SSH       SSHInfo `json:"ssh"`
+}
+
+// SSHInfo tells clients how to reach the SSH gateway.
+type SSHInfo struct {
+	Enabled bool `json:"enabled"`
+	// Host is the public gateway host. Empty means "same host as the console".
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port"`
+	// HostKey is the gateway's public host key (authorized_keys format).
+	HostKey     string `json:"hostKey,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 type capacityNode = capacity.NodeCapacity

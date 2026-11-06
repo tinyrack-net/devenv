@@ -1,0 +1,17 @@
+#!/bin/bash
+# Runs the VNC desktop for the dev user and restarts it if it exits
+# (e.g. the user logged out of XFCE).
+set -u
+export HOME=/home/dev USER=dev
+DISPLAY_NUM=1
+while true; do
+  rm -f /tmp/.X${DISPLAY_NUM}-lock /tmp/.X11-unix/X${DISPLAY_NUM}
+  Xvnc :${DISPLAY_NUM} -geometry 1600x900 -depth 24 \
+    -localhost yes -rfbport 5901 -SecurityTypes None \
+    -AcceptSetDesktopSize -AlwaysShared -desktop "devenv ${DEVENV_NAME:-}" &
+  xvnc=$!
+  for _ in $(seq 50); do [ -e /tmp/.X11-unix/X${DISPLAY_NUM} ] && break; sleep 0.1; done
+  DISPLAY=:${DISPLAY_NUM} dbus-launch --exit-with-session startxfce4 >/tmp/devenv-xfce.log 2>&1
+  kill $xvnc 2>/dev/null; wait $xvnc 2>/dev/null
+  sleep 1
+done

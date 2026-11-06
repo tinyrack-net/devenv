@@ -35,6 +35,9 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.sshService.type }}
+  {{- with .Values.sshService.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
   {{- with .Values.sshService.loadBalancerClass }}
   loadBalancerClass: {{ . }}
   {{- end }}
