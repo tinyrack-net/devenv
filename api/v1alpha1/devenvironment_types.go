@@ -8,7 +8,7 @@ import (
 const DefaultClassName = "default"
 
 // DevEnvironmentSpec defines the desired state of DevEnvironment.
-// +kubebuilder:validation:XValidation:rule="(has(self.className) ? self.className : ”) == (has(oldSelf.className) ? oldSelf.className : ”)",message="className is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.className) == has(oldSelf.className) && (!has(self.className) || self.className == oldSelf.className)",message="className is immutable"
 type DevEnvironmentSpec struct {
 	// Owner identifies the user owning this environment.
 	// +optional

@@ -65,7 +65,11 @@ func TestReport(t *testing.T) {
 		}),
 		pod("x", "p1", "a", "6", "4Gi"),
 		pod("x", "p2", "b", "1", "30Gi"),
-		func() *corev1.Pod { p := pod("x", "done", "a", "2", "2Gi"); p.Status.Phase = corev1.PodSucceeded; return p }(),
+		func() *corev1.Pod {
+			p := pod("x", "done", "a", "2", "2Gi")
+			p.Status.Phase = corev1.PodSucceeded
+			return p
+		}(),
 	)
 	rep, err := c.Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, nil)
 	if err != nil {
