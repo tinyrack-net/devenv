@@ -20,6 +20,9 @@ The devenv server reaches the environment only through SSH. The web
 terminal is an SSH session and the desktop is an SSH tunnel to
 `127.0.0.1:5901`, so VNC must not listen on other interfaces.
 
+Nothing else is required for the MCP tools: the server mounts its helper
+(`devenv-agent`) read-only at `/opt/devenv`, so do not use that path in images.
+
 ## Environment variables
 
 | Variable | Description |
