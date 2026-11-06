@@ -62,7 +62,7 @@ Kubernetes 위에서 동작하는 원격 개발 환경 플랫폼. 중앙 서버�
 - 사용자 `dev` (uid/gid 1000), sudo 허용.
 - `/home/dev` 영속 볼륨 마운트, 최초 기동 시 skel 복사.
 - sshd 22, `authorized_keys` 는 `/etc/devenv/ssh/authorized_keys` 로 마운트.
-- 데스크탑 이미지: VNC 5901.
+- 데스크탑 이미지: VNC `127.0.0.1:5901` (서버가 SSH 터널로 접근). 자세한 내용은 docs/images.md.
 - 프로세스 관리는 s6-overlay 또는 supervisord.
 
 ## 인증
@@ -86,6 +86,8 @@ images/              개발 환경 이미지
 ```
 
 ## 마일스톤
+
+진행 현황: M1~M4 완료(v0.2.0), M5 남음. 홈랩 배포는 tinyrack-net/homelab `apps/base/devenv`.
 
 | 단계 | 내용 |
 |---|---|
