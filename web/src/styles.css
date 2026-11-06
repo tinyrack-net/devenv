@@ -1,0 +1,121 @@
+:root {
+  --bg: #f6f7f9;
+  --fg: #1d2129;
+  --muted: #6b7280;
+  --card: #fff;
+  --border: #e3e5e8;
+  --primary: #2563eb;
+  --primary-fg: #fff;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --radius: 8px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318;
+    --fg: #e6e8eb;
+    --muted: #9aa1ab;
+    --card: #1a1d23;
+    --border: #2c3038;
+    --primary: #3b82f6;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 22px; margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+.topbar {
+  display: flex; align-items: center; gap: 24px; padding: 0 24px; height: 52px;
+  background: var(--card); border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; font-size: 16px; }
+.topbar nav { display: flex; gap: 4px; }
+.topbar nav a { color: var(--muted); padding: 6px 10px; border-radius: 6px; }
+.topbar nav a.active { color: var(--fg); background: var(--bg); }
+.spacer { flex: 1; }
+.content { padding: 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+.page-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+.breadcrumb { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.toolbar { display: flex; gap: 8px; }
+
+button, .button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit; padding: 7px 14px; border-radius: 6px; cursor: pointer;
+  background: var(--card); color: var(--fg); border: 1px solid var(--border);
+}
+button:hover:not(:disabled), .button:hover { border-color: var(--muted); text-decoration: none; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary, .button.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+button.danger { color: var(--danger); }
+button.small { padding: 3px 9px; font-size: 12px; }
+button.link { background: none; border: none; color: var(--primary); padding: 0; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+.card-header { display: flex; justify-content: space-between; align-items: baseline; }
+.card.empty { text-align: center; padding: 48px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.grid .wide { grid-column: 1 / -1; }
+
+.table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table th, .table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { font-weight: 500; color: var(--muted); font-size: 12px; }
+.table tr:last-child td { border-bottom: none; }
+.table.compact td { padding: 6px 8px; }
+.table .actions { text-align: right; white-space: nowrap; }
+.table .actions button + button { margin-left: 6px; }
+.table tr.disabled { opacity: 0.6; }
+.card .table { border: none; }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); }
+.badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.badge.bad { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+.badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.tag { display: inline-block; font-size: 11px; margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); }
+
+.alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+.notice { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; background: color-mix(in srgb, var(--warn) 10%, transparent); }
+
+.form { display: flex; flex-direction: column; gap: 16px; max-width: 760px; margin-bottom: 16px; }
+.field { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.field-label { font-weight: 500; }
+.field-hint { font-size: 12px; color: var(--muted); }
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+input, select, textarea {
+  font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--fg); width: 100%;
+}
+input[type="range"] { padding: 0; }
+input[type="checkbox"] { width: auto; }
+.checkbox { display: flex; align-items: center; gap: 8px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.choice { flex-direction: column; align-items: flex-start; text-align: left; gap: 4px; padding: 12px; }
+.choice.selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.resources { display: flex; flex-direction: column; gap: 14px; }
+
+.props { display: grid; grid-template-columns: 90px 1fr; gap: 8px 12px; margin: 0; }
+.props dt { color: var(--muted); }
+.props dd { margin: 0; }
+.connect { display: flex; flex-direction: column; gap: 8px; }
+.codeline { display: flex; align-items: center; gap: 8px; background: var(--bg); padding: 8px 10px; border-radius: 6px; }
+.codeline code { flex: 1; overflow-x: auto; }
+
+.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-card { width: 340px; display: flex; flex-direction: column; gap: 14px; }
+.center { padding: 48px; text-align: center; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.nowrap { white-space: nowrap; }
+.truncate { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error { color: var(--danger); }

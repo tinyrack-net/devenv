@@ -38,10 +38,17 @@ test: generate manifests $(SETUP_ENVTEST) ## Run tests with envtest
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 		go test ./... -count=1
 
+.PHONY: web
+web: ## Build the web console into web/dist
+	cd web && pnpm install --frozen-lockfile && pnpm build
+
 .PHONY: build
-build:
+build: ## Build the binary (embeds web/dist if built)
 	CGO_ENABLED=0 go build -o $(LOCALBIN)/devenv ./cmd/devenv
 
+.PHONY: build-all
+build-all: web build
+
 .PHONY: run
-run: manifests
-	go run ./cmd/devenv
+run: manifests ## Run against the current kubeconfig (API on :8080, auth disabled)
+	DEVENV_AUTH_MODE=none go run ./cmd/devenv --metrics-bind-address=0
