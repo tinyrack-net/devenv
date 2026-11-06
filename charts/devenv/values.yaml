@@ -50,19 +50,24 @@ defaultClass:
 # -- Built-in image catalog entries. Tags default to the chart appVersion.
 defaultImages:
   create: true
+  # -- prepull keeps an image on every node (DaemonSet with an image volume)
+  # so new environments start without pulling it.
   base:
     enabled: true
     repository: ghcr.io/tinyrack-net/devenv-base
     tag: ""
+    prepull: true
   desktop:
     enabled: true
     repository: ghcr.io/tinyrack-net/devenv-desktop
     tag: ""
+    prepull: false
   # -- Base image plus Go, Node.js (pnpm/yarn), uv and gh. Good default for AI agents.
   agent:
     enabled: true
     repository: ghcr.io/tinyrack-net/devenv-agent
     tag: ""
+    prepull: true
 
 # -- Extra DevEnvironmentClass objects: name -> spec.
 extraClasses: {}

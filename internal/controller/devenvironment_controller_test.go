@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -547,4 +548,49 @@ func updateEnv(t *testing.T, env *devenvv1.DevEnvironment, mutate func()) {
 		mutate()
 		return k8sClient.Update(testCtx, env)
 	}))
+}
+
+func TestImagePrepull(t *testing.T) {
+	ds := &appsv1.DaemonSet{}
+	getDS := func() error { return get(ds, "devenv-system", PrepullName) }
+
+	must(t, k8sClient.Create(testCtx, &devenvv1.DevImage{
+		ObjectMeta: metav1.ObjectMeta{Name: "prepull-a"},
+		Spec:       devenvv1.DevImageSpec{Image: "example.com/a:1", Prepull: true},
+	}))
+	must(t, k8sClient.Create(testCtx, &devenvv1.DevImage{
+		ObjectMeta: metav1.ObjectMeta{Name: "prepull-b"},
+		Spec:       devenvv1.DevImageSpec{Image: "example.com/b:1", Prepull: true},
+	}))
+	eventually(t, func() error {
+		if err := getDS(); err != nil {
+			return err
+		}
+		if n := len(ds.Spec.Template.Spec.Volumes); n != 2 {
+			return fmt.Errorf("volumes = %d", n)
+		}
+		return nil
+	})
+	v := ds.Spec.Template.Spec.Volumes
+	if v[0].Image == nil || v[0].Image.Reference != "example.com/a:1" || v[1].Image.Reference != "example.com/b:1" {
+		t.Errorf("volumes = %+v", v)
+	}
+	c := ds.Spec.Template.Spec.Containers[0]
+	if c.Image != "devenv:test" || c.Command[1] != "sleep" {
+		t.Errorf("container = %+v", c)
+	}
+
+	// Disabling prepull on all images removes the DaemonSet.
+	for _, n := range []string{"prepull-a", "prepull-b"} {
+		img := &devenvv1.DevImage{}
+		must(t, get(img, "", n))
+		img.Spec.Prepull = false
+		must(t, k8sClient.Update(testCtx, img))
+	}
+	eventually(t, func() error {
+		if err := getDS(); !apierrors.IsNotFound(err) {
+			return fmt.Errorf("daemonset still exists: %v", err)
+		}
+		return nil
+	})
 }

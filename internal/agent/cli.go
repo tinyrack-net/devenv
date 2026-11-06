@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -19,6 +21,14 @@ func Main(args []string, build string) int {
 		return 2
 	}
 	op := args[0]
+	if op == "sleep" {
+		// Placeholder container of the image prepull DaemonSet: wait for
+		// SIGTERM (a bare select{} is reported as a deadlock by the runtime).
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+		<-sig
+		return 0
+	}
 	if op == "daemon" {
 		if err := RunDaemon(10 * time.Minute); err != nil {
 			fmt.Fprintln(os.Stderr, "daemon:", err)

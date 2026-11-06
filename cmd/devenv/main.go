@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -120,12 +121,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Cluster scoped CRDs are cached cluster wide; namespaced objects only in the environment namespace.
+	// Namespaced objects are cached in the environment namespace.
 	cacheOpts := cache.Options{DefaultNamespaces: map[string]cache.Config{envNamespace: {}}}
 
 	cfg := ctrl.GetConfigOrDie()
 	if serverNamespace == "" {
 		serverNamespace = envNamespace
+	}
+	// The image prepull DaemonSet lives in the server namespace; only that
+	// type is cached there (the server has no other rights in it).
+	cacheOpts.ByObject = map[client.Object]cache.ByObject{
+		&appsv1.DaemonSet{}: {Namespaces: map[string]cache.Config{serverNamespace: {}}},
 	}
 
 	// Uncached client for bootstrap and cluster wide reads (nodes, pods, events).
@@ -239,6 +245,12 @@ func main() {
 		}
 		if err := mgr.Add(&server.HTTP{Addr: httpAddr, Handler: handler}); err != nil {
 			exit(err, "add http server")
+		}
+	}
+
+	if helperImage != "" {
+		if err := (&controller.PrepullReconciler{Client: mgr.GetClient(), Namespace: serverNamespace, Image: helperImage}).SetupWithManager(mgr); err != nil {
+			exit(err, "setup image prepull")
 		}
 	}
 

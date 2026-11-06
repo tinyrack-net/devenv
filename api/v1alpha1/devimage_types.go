@@ -31,6 +31,11 @@ type DevImageSpec struct {
 	// +optional
 	DefaultResources Resources `json:"defaultResources,omitempty"`
 
+	// Prepull keeps the image on every node that can run environments so new
+	// environments start without waiting for the pull.
+	// +optional
+	Prepull bool `json:"prepull,omitempty"`
+
 	// Disabled hides the image from the console for new environments.
 	// Existing environments keep working.
 	// +optional

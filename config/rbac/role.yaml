@@ -35,6 +35,18 @@ rules:
   - get
   - list
 - apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - devenv.tinyrack.net
   resources:
   - devenvironmentclasses

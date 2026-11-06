@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -60,6 +62,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	if err := (&PrepullReconciler{Client: mgr.GetClient(), Namespace: "devenv-system", Image: "devenv:test"}).SetupWithManager(mgr); err != nil {
+		panic(err)
+	}
+
 	var cancel context.CancelFunc
 	testCtx, cancel = context.WithCancel(context.Background())
 	go func() {
@@ -73,6 +79,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	if err := k8sClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "devenv-system"}}); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	cancel()
 	_ = env.Stop()

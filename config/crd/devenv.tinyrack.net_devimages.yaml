@@ -104,6 +104,11 @@ spec:
               imagePullPolicy:
                 description: ImagePullPolicy for the image.
                 type: string
+              prepull:
+                description: |-
+                  Prepull keeps the image on every node that can run environments so new
+                  environments start without waiting for the pull.
+                type: boolean
             required:
             - image
             type: object

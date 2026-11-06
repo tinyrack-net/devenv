@@ -27,6 +27,7 @@ metadata:
     helm.sh/resource-policy: keep
 spec:
   image: {{ printf "%s:%s" .Values.defaultImages.base.repository (default .Chart.AppVersion .Values.defaultImages.base.tag) }}
+  prepull: {{ .Values.defaultImages.base.prepull }}
   displayName: Ubuntu 24.04
   description: Ubuntu with common developer tools
   defaultResources:
@@ -44,6 +45,7 @@ metadata:
     helm.sh/resource-policy: keep
 spec:
   image: {{ printf "%s:%s" .Values.defaultImages.desktop.repository (default .Chart.AppVersion .Values.defaultImages.desktop.tag) }}
+  prepull: {{ .Values.defaultImages.desktop.prepull }}
   displayName: Ubuntu 24.04 + XFCE
   description: Desktop environment in the browser (VNC)
   desktop: true
@@ -62,6 +64,7 @@ metadata:
     helm.sh/resource-policy: keep
 spec:
   image: {{ printf "%s:%s" .Values.defaultImages.agent.repository (default .Chart.AppVersion .Values.defaultImages.agent.tag) }}
+  prepull: {{ .Values.defaultImages.agent.prepull }}
   displayName: Ubuntu 24.04 + toolchains
   description: Go, Node.js (pnpm, yarn), Python (uv), GitHub CLI, ripgrep
   defaultResources:
