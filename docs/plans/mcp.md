@@ -60,3 +60,16 @@ AI 에이전트가 MCP로 devenv 환경을 만들고, 명령을 실행하고, �
 2. `exec`
 3. 유휴 자동 정지
 4. 문서, v0.5.0, 홈랩 배포·Bifrost 등록
+
+## 결과 (v0.5.0, 2026-11-06)
+
+- 구현: `internal/mcpserver`(도구·exec), `internal/activity`(활동 기록), 컨트롤러 `idle.go`. REST 핸들러는 `Server.CreateEnvironment` 등 공용 함수로 분리했다.
+- 홈랩: 0.5.0 배포. Cilium에서 `bifrost-system/bifrost` → `devenv-system/devenv:8080`을 허용했다.
+- Bifrost: 클라이언트 `devenv`(code mode, headers 인증, `tools_to_execute=["*"]`)를 `POST /api/mcp/client`로 등록했다. 주소는 `http://devenv.devenv-system.svc.cluster.local/mcp`. `dev`(id 2)·`personal`(id 4) Virtual MCP에 연결했다.
+- 토큰: Secret `devenv-system/devenv-keys`의 `mcp-token`. 원본은 Bitwarden `344e14cc-213f-410a-9273-b4f700a68590`의 `DEVENV_MCP_TOKEN` 필드.
+- 검증: Bifrost code mode로 환경 생성 → `git clone` → Go 설치 → devenv 빌드(52MB) → 삭제. kind에서 유휴 2분 설정으로 자동 정지 → `exec` 자동 시작, `/home/dev` 유지를 확인했다.
+
+### 운영 메모
+
+- Bifrost code mode의 도구 호출은 60초에서 끊긴다. 오래 걸리는 작업은 `nohup ... > log 2>&1 &`로 띄우고 짧은 `exec`로 로그를 확인한다. 도구 설명에도 같은 안내가 있다.
+- `delete_environment` 직후 `list_environments`에는 삭제 중인 환경이 잠시 보인다(foreground 삭제).
