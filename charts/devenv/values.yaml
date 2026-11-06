@@ -1,0 +1,117 @@
+# -- Override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/tinyrack-net/devenv
+  # -- Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# -- Replicas. Leader election is enabled automatically when > 1.
+replicaCount: 1
+
+environments:
+  # -- Namespace where environments are created.
+  namespace: devenv
+  # -- Create the namespace (set false if you manage it yourself).
+  createNamespace: true
+  namespaceLabels: {}
+  namespaceAnnotations: {}
+  # -- Optional ResourceQuota for the environment namespace, e.g.
+  # { requests.cpu: "16", requests.memory: 64Gi, requests.storage: 500Gi }
+  quota: {}
+
+auth:
+  # -- password or none (development only).
+  mode: password
+  adminUsername: admin
+  # -- Existing Secret with key `password`. When empty a random password is
+  # generated and kept across upgrades.
+  existingSecret: ""
+
+# -- Create a default DevEnvironmentClass. Every environment without an
+# explicit class uses the class named "default".
+defaultClass:
+  create: true
+  spec:
+    storage:
+      mode: persistent
+      # storageClassName: ""   # empty = cluster default
+      defaultSize: 10Gi
+    network:
+      mode: gateway
+    limits:
+      maxCPU: "8"
+      maxMemory: 16Gi
+      maxDisk: 100Gi
+
+# -- Built-in image catalog entries. Tags default to the chart appVersion.
+defaultImages:
+  create: true
+  base:
+    enabled: true
+    repository: ghcr.io/tinyrack-net/devenv-base
+    tag: ""
+
+# -- Extra DevEnvironmentClass objects: name -> spec.
+extraClasses: {}
+# -- Extra DevImage objects: name -> spec.
+extraImages: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+  labels: {}
+
+# -- SSH gateway service (ssh -p <port> <env>@<host>).
+sshService:
+  enabled: true
+  type: ClusterIP
+  port: 2222
+  # -- Fixed nodePort when type is NodePort.
+  nodePort: null
+  loadBalancerClass: ""
+  annotations: {}
+  labels: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: devenv.example.com
+  tls: []
+  #  - secretName: devenv-tls
+  #    hosts: [devenv.example.com]
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+
+# -- Set the Secure flag on cookies. Enable when served over HTTPS.
+secureCookies: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+logLevel: info
+extraArgs: []
+extraEnv: []

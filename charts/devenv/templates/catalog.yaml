@@ -1,0 +1,44 @@
+{{- if .Values.defaultClass.create }}
+apiVersion: devenv.tinyrack.net/v1alpha1
+kind: DevEnvironmentClass
+metadata:
+  name: default
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+spec: {{- toYaml .Values.defaultClass.spec | nindent 2 }}
+{{- end }}
+{{- range $name, $spec := .Values.extraClasses }}
+---
+apiVersion: devenv.tinyrack.net/v1alpha1
+kind: DevEnvironmentClass
+metadata:
+  name: {{ $name }}
+  labels: {{- include "devenv.labels" $ | nindent 4 }}
+spec: {{- toYaml $spec | nindent 2 }}
+{{- end }}
+{{- if and .Values.defaultImages.create .Values.defaultImages.base.enabled }}
+---
+apiVersion: devenv.tinyrack.net/v1alpha1
+kind: DevImage
+metadata:
+  name: base
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+  annotations:
+    # Admins may edit the catalog from the console; keep it on uninstall.
+    helm.sh/resource-policy: keep
+spec:
+  image: {{ printf "%s:%s" .Values.defaultImages.base.repository (default .Chart.AppVersion .Values.defaultImages.base.tag) }}
+  displayName: Ubuntu 24.04
+  description: Ubuntu with common developer tools
+  defaultResources:
+    cpu: "2"
+    memory: 4Gi
+{{- end }}
+{{- range $name, $spec := .Values.extraImages }}
+---
+apiVersion: devenv.tinyrack.net/v1alpha1
+kind: DevImage
+metadata:
+  name: {{ $name }}
+  labels: {{- include "devenv.labels" $ | nindent 4 }}
+spec: {{- toYaml $spec | nindent 2 }}
+{{- end }}

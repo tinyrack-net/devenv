@@ -138,6 +138,28 @@ func TestCreatesChildren(t *testing.T) {
 	if got := string(secret.Data["authorized_keys"]); got != "ssh-ed25519 AAAA test@example\n" {
 		t.Errorf("authorized_keys = %q", got)
 	}
+	hostKey := string(secret.Data[HostKeyFile])
+	if !strings.Contains(hostKey, "OPENSSH PRIVATE KEY") || !strings.HasPrefix(string(secret.Data[HostPublicKeyFile]), "ssh-ed25519 ") {
+		t.Errorf("host key not generated: %v", secret.Data)
+	}
+
+	// Updating keys keeps the host key.
+	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
+	env.Spec.SSHAuthorizedKeys = []string{"ssh-ed25519 BBBB other@example"}
+	must(t, k8sClient.Update(testCtx, env))
+	eventually(t, func() error {
+		s := &corev1.Secret{}
+		if err := get(s, f.ns, "dev1-ssh"); err != nil {
+			return err
+		}
+		if !strings.Contains(string(s.Data["authorized_keys"]), "BBBB") {
+			return fmt.Errorf("keys not updated")
+		}
+		if string(s.Data[HostKeyFile]) != hostKey {
+			return fmt.Errorf("host key changed")
+		}
+		return nil
+	})
 
 	svc := &corev1.Service{}
 	must(t, get(svc, f.ns, "dev1"))

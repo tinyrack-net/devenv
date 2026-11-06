@@ -28,5 +28,5 @@ make build-all            # build web console and embed it into bin/devenv
 | `DEVENV_AUTH_MODE` | `password` | `password` or `none` (development only) |
 | `DEVENV_ADMIN_USERNAME` | `admin` | Admin username |
 | `DEVENV_ADMIN_PASSWORD` / `_FILE` | required | Admin password |
-| `DEVENV_SESSION_KEY` / `_FILE` | random | Session signing key; set it to keep sessions across restarts |
+| `DEVENV_KEYS_SECRET` | `devenv-keys` | Secret (in `POD_NAMESPACE`) where the server stores generated session and SSH keys |
 | `DEVENV_SECURE_COOKIES` | `false` | Set `true` behind HTTPS |

@@ -1,0 +1,18 @@
+# Managed by devenv
+HostKey /etc/ssh/ssh_host_ed25519_key
+# Keys come from the environment Secret mounted at /etc/devenv/ssh. Secret
+# volumes are world-writable symlink farms that StrictModes rejects, so they
+# are read through a command. This also picks up key changes without restart.
+AuthorizedKeysCommand /usr/local/bin/devenv-authorized-keys %u
+AuthorizedKeysCommandUser nobody
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers dev
+AllowTcpForwarding yes
+GatewayPorts clientspecified
+X11Forwarding yes
+PrintMotd no
+ClientAliveInterval 30
+AcceptEnv LANG LC_* COLORTERM TERM_PROGRAM

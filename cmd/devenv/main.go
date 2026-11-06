@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
 	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/keys"
 	"github.com/tinyrack-net/devenv/internal/server"
 	"github.com/tinyrack-net/devenv/web"
 )
@@ -64,6 +66,8 @@ func main() {
 		envNamespace    string
 		leaderNamespace string
 		authMode        string
+		serverNamespace string
+		keysSecret      string
 		adminUser       string
 		secureCookies   bool
 	)
@@ -77,6 +81,8 @@ func main() {
 	flag.StringVar(&authMode, "auth-mode", envOr("DEVENV_AUTH_MODE", "password"), "Authentication mode: password or none (development only).")
 	flag.StringVar(&adminUser, "admin-username", envOr("DEVENV_ADMIN_USERNAME", "admin"), "Admin username for password auth.")
 	flag.BoolVar(&secureCookies, "secure-cookies", envOr("DEVENV_SECURE_COOKIES", "false") == "true", "Set the Secure flag on session cookies (enable behind HTTPS).")
+	flag.StringVar(&serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server, used for its key Secret. Defaults to the environment namespace.")
+	flag.StringVar(&keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding generated server keys.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -92,6 +98,19 @@ func main() {
 	cacheOpts := cache.Options{DefaultNamespaces: map[string]cache.Config{envNamespace: {}}}
 
 	cfg := ctrl.GetConfigOrDie()
+	if serverNamespace == "" {
+		serverNamespace = envNamespace
+	}
+
+	// Uncached client for bootstrap and cluster wide reads (nodes, pods, events).
+	direct, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		exit(err, "create client")
+	}
+	serverKeys, err := keys.Ensure(context.Background(), direct, serverNamespace, keysSecret)
+	if err != nil {
+		exit(err, "bootstrap server keys")
+	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                  scheme,
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
@@ -109,6 +128,8 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("devenv"),
+
+		GatewayAuthorizedKey: serverKeys.ClientAuthorizedKey(),
 	}).SetupWithManager(mgr); err != nil {
 		exit(err, "setup controller")
 	}
@@ -131,23 +152,11 @@ func main() {
 		default:
 			exit(fmt.Errorf("unknown auth mode %q", authMode), "configure auth")
 		}
-		sessionKey, err := readSecret("DEVENV_SESSION_KEY")
-		if err != nil {
-			exit(err, "read session key")
-		}
-		if sessionKey == "" {
-			log.Info("DEVENV_SESSION_KEY not set, sessions will not survive restarts")
-		}
-		sessions, err := auth.NewSessions([]byte(sessionKey), secureCookies)
+		sessions, err := auth.NewSessions(serverKeys.SessionKey, secureCookies)
 		if err != nil {
 			exit(err, "create sessions")
 		}
-
-		// Uncached reader for nodes, pods and events across the cluster.
-		reader, err := client.New(cfg, client.Options{Scheme: scheme})
-		if err != nil {
-			exit(err, "create api reader")
-		}
+		reader := direct
 
 		srv := &api.Server{
 			Client:    mgr.GetClient(),

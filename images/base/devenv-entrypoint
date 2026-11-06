@@ -1,0 +1,45 @@
+#!/bin/bash
+# devenv entrypoint: prepares the home volume and SSH, runs hooks, then sshd.
+set -euo pipefail
+
+log() { echo "[devenv] $*"; }
+
+# 1. Home directory: populate from skel on first start of a fresh volume.
+if [ ! -e /home/dev/.devenv-initialized ]; then
+  log "initializing /home/dev"
+  cp -an /etc/skel/. /home/dev/ 2>/dev/null || true
+  touch /home/dev/.devenv-initialized
+fi
+chown dev:dev /home/dev
+# Fix ownership of the top level only; deep chown on large volumes is slow.
+find /home/dev -maxdepth 1 ! -user dev -exec chown dev:dev {} + 2>/dev/null || true
+
+# 2. SSH host key from the environment Secret (stable across restarts).
+if [ -s /etc/devenv/ssh/ssh_host_ed25519_key ]; then
+  install -m 0600 /etc/devenv/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
+  install -m 0644 /etc/devenv/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ed25519_key.pub
+elif [ ! -s /etc/ssh/ssh_host_ed25519_key ]; then
+  ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
+fi
+
+# 3. Environment for SSH sessions (sshd does not pass the container env).
+sed -i '/^DEVENV_/d' /etc/environment
+{
+  echo "DEVENV_NAME=${DEVENV_NAME:-}"
+  echo "DEVENV_OWNER=${DEVENV_OWNER:-}"
+} >> /etc/environment
+
+# 4. Image specific hooks (e.g. desktop/VNC) in /etc/devenv/entrypoint.d.
+for hook in /etc/devenv/entrypoint.d/*.sh; do
+  [ -e "$hook" ] || continue
+  log "running $(basename "$hook")"
+  # shellcheck disable=SC1090
+  . "$hook"
+done
+
+# 5. sshd in the foreground. Overridable for debugging.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+log "starting sshd"
+exec /usr/sbin/sshd -D -e

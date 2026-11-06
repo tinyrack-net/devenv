@@ -1,0 +1,27 @@
+{{- if and .Values.environments.createNamespace (ne .Values.environments.namespace .Release.Namespace) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.environments.namespace }}
+  labels:
+    {{- include "devenv.labels" . | nindent 4 }}
+    {{- with .Values.environments.namespaceLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- with .Values.environments.namespaceAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- with .Values.environments.quota }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: devenv
+  namespace: {{ $.Values.environments.namespace }}
+  labels: {{- include "devenv.labels" $ | nindent 4 }}
+spec:
+  hard: {{- toYaml . | nindent 4 }}
+{{- end }}

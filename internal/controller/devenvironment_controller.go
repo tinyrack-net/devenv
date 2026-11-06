@@ -33,6 +33,9 @@ type DevEnvironmentReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+	// GatewayAuthorizedKey is the public key the devenv server uses to connect
+	// to environments (SSH gateway, web terminal, VNC tunnel). Optional.
+	GatewayAuthorizedKey string
 }
 
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironments,verbs=get;list;watch;create;update;patch;delete
@@ -133,12 +136,25 @@ func (r *DevEnvironmentReconciler) resolve(ctx context.Context, env *devenvv1.De
 }
 
 func (r *DevEnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolved) error {
-	desired := rs.desiredSecret()
+	var extra []string
+	if r.GatewayAuthorizedKey != "" {
+		extra = append(extra, r.GatewayAuthorizedKey)
+	}
+	desired := rs.desiredSecret(extra...)
 	obj := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
+		priv, pub := obj.Data[HostKeyFile], obj.Data[HostPublicKeyFile]
+		if len(priv) == 0 || len(pub) == 0 {
+			var err error
+			if priv, pub, err = generateHostKey(); err != nil {
+				return err
+			}
+		}
 		obj.Labels = desired.Labels
 		obj.Type = desired.Type
 		obj.Data = desired.Data
+		obj.Data[HostKeyFile] = priv
+		obj.Data[HostPublicKeyFile] = pub
 		return controllerutil.SetControllerReference(rs.env, obj, r.Scheme)
 	})
 	return err

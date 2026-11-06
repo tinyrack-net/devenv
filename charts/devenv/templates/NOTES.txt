@@ -1,0 +1,18 @@
+devenv {{ .Chart.AppVersion }} is installed.
+
+Environments are created in namespace "{{ .Values.environments.namespace }}".
+
+{{- if eq .Values.auth.mode "password" }}
+
+Sign in as "{{ .Values.auth.adminUsername }}" with the password:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "devenv.authSecretName" . }} -o jsonpath='{.data.password}' | base64 -d; echo
+{{- end }}
+
+Open the web console:
+{{- if .Values.ingress.enabled }}
+  http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "devenv.fullname" . }} 8080:{{ .Values.service.port }}
+  http://localhost:8080
+{{- end }}

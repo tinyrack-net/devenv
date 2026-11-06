@@ -22,10 +22,11 @@ generate: $(CONTROLLER_GEN) ## Generate deepcopy code
 	$(CONTROLLER_GEN) object paths="./api/..."
 
 .PHONY: manifests
-manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC
+manifests: $(CONTROLLER_GEN) ## Generate CRDs and RBAC (also copied into the chart)
 	$(CONTROLLER_GEN) crd rbac:roleName=devenv paths="./..." \
 		output:crd:artifacts:config=config/crd \
 		output:rbac:artifacts:config=config/rbac
+	cp config/crd/*.yaml charts/devenv/crds/
 
 .PHONY: fmt vet
 fmt:
@@ -52,3 +53,12 @@ build-all: web build
 .PHONY: run
 run: manifests ## Run against the current kubeconfig (API on :8080, auth disabled)
 	DEVENV_AUTH_MODE=none go run ./cmd/devenv --metrics-bind-address=0
+
+.PHONY: chart-crds
+chart-crds: manifests ## Copy generated CRDs into the Helm chart
+	cp config/crd/*.yaml charts/devenv/crds/
+
+.PHONY: chart-lint
+chart-lint: chart-crds
+	helm lint charts/devenv
+	helm template devenv charts/devenv --namespace devenv-system >/dev/null

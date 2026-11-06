@@ -1,0 +1,5 @@
+#!/bin/sh
+# Prints authorized keys for the dev user from the environment Secret.
+[ "$1" = "dev" ] || exit 0
+cat /etc/devenv/ssh/authorized_keys 2>/dev/null
+exit 0

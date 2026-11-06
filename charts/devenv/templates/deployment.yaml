@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devenv.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{- include "devenv.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "devenv.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "devenv.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: devenv
+          image: {{ include "devenv.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --environment-namespace={{ .Values.environments.namespace }}
+            - --leader-elect={{ gt (int .Values.replicaCount) 1 }}
+            - --zap-log-level={{ .Values.logLevel }}
+            {{- range .Values.extraArgs }}
+            - {{ . }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DEVENV_HTTP_ADDR
+              value: ":8080"
+            - name: DEVENV_SSH_ADDR
+              value: ":2222"
+            - name: DEVENV_AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: DEVENV_ADMIN_USERNAME
+              value: {{ .Values.auth.adminUsername | quote }}
+            - name: DEVENV_SECURE_COOKIES
+              value: {{ .Values.secureCookies | quote }}
+            - name: DEVENV_KEYS_SECRET
+              value: {{ include "devenv.fullname" . }}-keys
+            {{- if eq .Values.auth.mode "password" }}
+            - name: DEVENV_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "devenv.authSecretName" . }}
+                  key: password
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: ssh
+              containerPort: 2222
+            - name: metrics
+              containerPort: 8081
+            - name: probes
+              containerPort: 8082
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

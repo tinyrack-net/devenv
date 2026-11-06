@@ -32,7 +32,10 @@ const (
 	SSHPort       = 22
 	VNCPort       = 5901
 
-	authorizedKeysFile = "authorized_keys"
+	// Keys of the per-environment SSH Secret.
+	AuthorizedKeysFile = "authorized_keys"
+	HostKeyFile        = "ssh_host_ed25519_key"
+	HostPublicKeyFile  = "ssh_host_ed25519_key.pub"
 )
 
 // resolved holds everything needed to render child objects.
@@ -83,9 +86,11 @@ func (r *resolved) validate() error {
 	return r.class.Spec.CheckLimits(r.resources())
 }
 
-func (r *resolved) desiredSecret() *corev1.Secret {
-	keys := make([]string, 0, len(r.env.Spec.SSHAuthorizedKeys))
-	for _, k := range r.env.Spec.SSHAuthorizedKeys {
+// desiredSecret renders authorized_keys. Host keys are added by the reconciler
+// so they stay stable across reconciles.
+func (r *resolved) desiredSecret(extraKeys ...string) *corev1.Secret {
+	keys := make([]string, 0, len(r.env.Spec.SSHAuthorizedKeys)+len(extraKeys))
+	for _, k := range append(append([]string{}, r.env.Spec.SSHAuthorizedKeys...), extraKeys...) {
 		if k = strings.TrimSpace(k); k != "" {
 			keys = append(keys, k)
 		}
@@ -101,7 +106,7 @@ func (r *resolved) desiredSecret() *corev1.Secret {
 			Labels:    labels(r.env, "ssh"),
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{authorizedKeysFile: []byte(content)},
+		Data: map[string][]byte{AuthorizedKeysFile: []byte(content)},
 	}
 }
 
@@ -215,6 +220,11 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 				{Name: "ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 					SecretName:  secretName(env),
 					DefaultMode: ptr.To[int32](0o644),
+					Items: []corev1.KeyToPath{
+						{Key: AuthorizedKeysFile, Path: AuthorizedKeysFile},
+						{Key: HostKeyFile, Path: HostKeyFile, Mode: ptr.To[int32](0o600)},
+						{Key: HostPublicKeyFile, Path: HostPublicKeyFile},
+					},
 				}}},
 			},
 		},
