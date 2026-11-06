@@ -70,3 +70,12 @@ v0.5.0에서 `spec.idleTimeout`과 활동 기록으로 구현했지만 제거했
 
 - Bifrost code mode의 도구 호출은 60초에서 끊긴다. 오래 걸리는 작업은 `nohup ... > log 2>&1 &`로 띄우고 짧은 `exec`로 로그를 확인한다. 도구 설명에도 같은 안내가 있다.
 - `delete_environment` 직후 `list_environments`에는 삭제 중인 환경이 잠시 보인다(foreground 삭제).
+
+## v0.7.0: 코딩 도구 (2026-11-06)
+
+- 도구 추가: `read_file`, `write_file`, `edit_file`, `list_dir`(SFTP), `search`, `find_files`(ripgrep, grep 대체), `start_process`, `read_process_output`, `list_processes`, `stop_process`(분리된 프로세스 그룹, 로그 `/tmp/devenv-proc`). 전체 21개.
+- 이미지: base에 ripgrep·fd·file·patch. `devenv-agent`(Go, Node.js+corepack, uv, gh)를 `agent` DevImage로 등록.
+- 버그: Node 아카이브가 `/usr/local/bin` 소유자를 1001로 바꿔 sshd가 `AuthorizedKeysCommand`를 거부했다. agent 이미지에서 소유자를 고치고, base entrypoint가 시작할 때 복구하도록 했다.
+- Bifrost: 도구 목록을 캐시하고 reconnect·설정 수정으로는 갱신하지 않는다(per-call 연결 클라이언트). 도구를 바꾸면 클라이언트를 삭제·재등록하고 Virtual MCP `dev`(2)·`personal`(4)에 다시 연결해야 한다. 새 client_id `1882f868-39ab-4c38-94d2-55a49f449bfc`.
+- Bifrost code mode는 스크립트 한 번(`executeToolCode`)이 60초를 넘으면 끊긴다. 도구 호출을 여러 개 묶으면 합계가 60초에 걸리므로, 환경 생성·빌드 대기는 호출을 나눈다. `read_process_output`의 `wait_seconds`는 40 이하로 쓴다.
+- 검증: Bifrost로 agent 환경 생성 → clone → find_files/search/read_file → edit_file → start_process 빌드 → read_process_output 대기 → 변경이 바이너리에 반영됨을 확인 → 삭제.
