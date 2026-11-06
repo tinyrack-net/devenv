@@ -90,11 +90,7 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 		setPhase(env, devenvv1.PhaseFailed, "InvalidSpec", err.Error())
 		return ctrl.Result{}, nil
 	}
-	if mode := rs.networkMode(); mode != devenvv1.NetworkModeGateway {
-		setPhase(env, devenvv1.PhaseFailed, "UnsupportedNetworkMode",
-			fmt.Sprintf("network mode %q is not supported yet", mode))
-		return ctrl.Result{}, nil
-	}
+	env.Status.NetworkMode = rs.networkMode()
 
 	if err := r.ensureSecret(ctx, rs); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure secret: %w", err)
@@ -108,6 +104,9 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 		return ctrl.Result{}, fmt.Errorf("ensure service: %w", err)
 	}
 	env.Status.ServiceName = serviceName(env)
+	if err := r.ensureLBService(ctx, rs); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure loadbalancer service: %w", err)
+	}
 
 	if !env.IsRunning() {
 		return r.ensureStopped(ctx, env)
@@ -201,12 +200,71 @@ func (r *DevEnvironmentReconciler) ensureService(ctx context.Context, rs *resolv
 	return err
 }
 
+// ensureLBService manages the LoadBalancer Service in loadBalancer mode and
+// removes it otherwise. The Service survives stop so the address is kept.
+func (r *DevEnvironmentReconciler) ensureLBService(ctx context.Context, rs *resolved) error {
+	env := rs.env
+	if rs.networkMode() != devenvv1.NetworkModeLoadBalancer {
+		svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: lbServiceName(env), Namespace: env.Namespace}}
+		if err := r.Delete(ctx, svc); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		if rs.networkMode() == devenvv1.NetworkModeGateway {
+			env.Status.IP = ""
+		}
+		return nil
+	}
+	desired := rs.desiredLBService()
+	obj := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
+		obj.Labels = desired.Labels
+		if obj.Annotations == nil {
+			obj.Annotations = map[string]string{}
+		}
+		for k, v := range desired.Annotations {
+			obj.Annotations[k] = v
+		}
+		obj.Spec.Type = desired.Spec.Type
+		if obj.Spec.LoadBalancerClass == nil {
+			// Immutable once set.
+			obj.Spec.LoadBalancerClass = desired.Spec.LoadBalancerClass
+		}
+		obj.Spec.Selector = desired.Spec.Selector
+		obj.Spec.Ports = mergeNodePorts(obj.Spec.Ports, desired.Spec.Ports)
+		obj.Spec.ExternalTrafficPolicy = desired.Spec.ExternalTrafficPolicy
+		return controllerutil.SetControllerReference(env, obj, r.Scheme)
+	})
+	if err != nil {
+		return err
+	}
+	env.Status.IP = lbAddress(obj)
+	return nil
+}
+
+// mergeNodePorts keeps allocated node ports so updates do not reshuffle them.
+func mergeNodePorts(current, desired []corev1.ServicePort) []corev1.ServicePort {
+	alloc := map[string]int32{}
+	for _, p := range current {
+		alloc[fmt.Sprintf("%s/%d", p.Protocol, p.Port)] = p.NodePort
+	}
+	out := make([]corev1.ServicePort, len(desired))
+	for i, p := range desired {
+		p.NodePort = alloc[fmt.Sprintf("%s/%d", p.Protocol, p.Port)]
+		out[i] = p
+	}
+	return out
+}
+
 func (r *DevEnvironmentReconciler) ensureStopped(ctx context.Context, env *devenvv1.DevEnvironment) (ctrl.Result, error) {
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: env.Namespace, Name: podName(env)}, pod)
 	if apierrors.IsNotFound(err) {
 		env.Status.PodName = ""
 		env.Status.NodeName = ""
+		// A multus address belongs to the pod; loadBalancer addresses persist.
+		if env.Status.NetworkMode == devenvv1.NetworkModeMultus {
+			env.Status.IP = ""
+		}
 		setPhase(env, devenvv1.PhaseStopped, "Stopped", "")
 		return ctrl.Result{}, nil
 	}
@@ -226,7 +284,7 @@ func (r *DevEnvironmentReconciler) ensureRunning(ctx context.Context, rs *resolv
 	env := rs.env
 	desired, err := rs.desiredPod()
 	if err != nil {
-		setPhase(env, devenvv1.PhaseFailed, "InvalidPodOverrides", err.Error())
+		setPhase(env, devenvv1.PhaseFailed, "InvalidPodSpec", err.Error())
 		return ctrl.Result{}, nil
 	}
 
@@ -267,7 +325,13 @@ func (r *DevEnvironmentReconciler) ensureRunning(ctx context.Context, rs *resolv
 
 	env.Status.PodName = pod.Name
 	env.Status.NodeName = pod.Spec.NodeName
+	if rs.networkMode() == devenvv1.NetworkModeMultus {
+		env.Status.IP, env.Status.MAC = multusAddress(pod, rs.multusInterface())
+	}
 	phase, reason, msg := podPhase(pod)
+	if phase == devenvv1.PhaseRunning && rs.networkMode() != devenvv1.NetworkModeGateway && env.Status.IP == "" {
+		msg = "waiting for an external address"
+	}
 	setPhase(env, phase, reason, msg)
 	return ctrl.Result{}, nil
 }

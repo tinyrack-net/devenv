@@ -225,6 +225,14 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 		pod.Spec.Hostname = env.Name
 	}
 
+	if r.networkMode() == devenvv1.NetworkModeMultus {
+		a, err := r.multusAnnotation()
+		if err != nil {
+			return nil, err
+		}
+		pod.Annotations = map[string]string{annotationNetworks: a}
+	}
+
 	if err := applyPodOverrides(pod, r.class); err != nil {
 		return nil, err
 	}

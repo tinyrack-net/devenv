@@ -36,6 +36,30 @@ type DevEnvironmentSpec struct {
 	// SSHAuthorizedKeys are written to the environment's authorized_keys.
 	// +optional
 	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
+
+	// Ports exposed on the environment's own address in loadBalancer
+	// network mode. SSH (22) is always exposed. Ignored in other modes
+	// (multus exposes every port).
+	// +listType=map
+	// +listMapKey=port
+	// +listMapKey=protocol
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	Ports []Port `json:"ports,omitempty"`
+}
+
+// Port is a port exposed in loadBalancer network mode.
+type Port struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+	// +kubebuilder:validation:Enum=TCP;UDP
+	// +kubebuilder:default=TCP
+	Protocol string `json:"protocol"`
+	// Name is an optional label shown in the console.
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Name string `json:"name,omitempty"`
 }
 
 // Phase is a high level summary of the environment state.
@@ -91,6 +115,10 @@ type DevEnvironmentStatus struct {
 	// IP is the externally reachable address (loadBalancer or multus mode).
 	// +optional
 	IP string `json:"ip,omitempty"`
+
+	// NetworkMode is the effective network mode of the class.
+	// +optional
+	NetworkMode NetworkMode `json:"networkMode,omitempty"`
 
 	// MAC is the secondary interface MAC address (multus mode).
 	// +optional

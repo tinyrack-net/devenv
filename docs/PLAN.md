@@ -87,7 +87,7 @@ images/              개발 환경 이미지
 
 ## 마일스톤
 
-진행 현황: M1~M4 완료(v0.2.0), M5 남음. 홈랩 배포는 tinyrack-net/homelab `apps/base/devenv`.
+진행 현황: M1~M5 완료(v0.3.0). 홈랩 배포는 tinyrack-net/homelab `apps/base/devenv`.
 
 | 단계 | 내용 |
 |---|---|

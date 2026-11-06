@@ -65,6 +65,39 @@ spec:
               owner:
                 description: Owner identifies the user owning this environment.
                 type: string
+              ports:
+                description: |-
+                  Ports exposed on the environment's own address in loadBalancer
+                  network mode. SSH (22) is always exposed. Ignored in other modes
+                  (multus exposes every port).
+                items:
+                  description: Port is a port exposed in loadBalancer network mode.
+                  properties:
+                    name:
+                      description: Name is an optional label shown in the console.
+                      maxLength: 63
+                      type: string
+                    port:
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    protocol:
+                      default: TCP
+                      enum:
+                      - TCP
+                      - UDP
+                      type: string
+                  required:
+                  - port
+                  - protocol
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - port
+                - protocol
+                x-kubernetes-list-type: map
               resources:
                 description: Resources requested for the environment.
                 properties:
@@ -193,6 +226,13 @@ spec:
                 type: string
               message:
                 description: Message is a human readable explanation of the phase.
+                type: string
+              networkMode:
+                description: NetworkMode is the effective network mode of the class.
+                enum:
+                - gateway
+                - loadBalancer
+                - multus
                 type: string
               nodeName:
                 description: NodeName where the environment runs.

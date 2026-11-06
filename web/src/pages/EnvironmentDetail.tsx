@@ -10,6 +10,7 @@ import {
   timeAgo,
 } from "../components/common";
 import { ResourceInputs } from "../components/ResourceInputs";
+import { Ports } from "../components/Ports";
 import { formatBytes, formatCPU, gib } from "../quantity";
 
 // Heavy viewers are loaded on demand.
@@ -163,11 +164,18 @@ function Detail({ env }: { env: Environment }) {
               <dd>{env.class}</dd>
               <dt>Node</dt>
               <dd>{env.nodeName || "-"}</dd>
+              <dt>Network</dt>
+              <dd>{networkLabel(env.networkMode)}</dd>
               <dt>IP</dt>
               <dd>
-                {env.ip || (
-                  <span className="muted">not assigned (gateway mode)</span>
+                {env.ip ? (
+                  <span className="mono">{env.ip}</span>
+                ) : env.networkMode && env.networkMode !== "gateway" ? (
+                  <span className="muted">{env.running ? "waiting for an address…" : "assigned on start"}</span>
+                ) : (
+                  <span className="muted">none (SSH gateway)</span>
                 )}
+                {env.mac && <div className="small muted mono">{env.mac}</div>}
               </dd>
               <dt>Owner</dt>
               <dd>{env.owner || "-"}</dd>
@@ -215,6 +223,13 @@ function Detail({ env }: { env: Environment }) {
             <h2>Connect</h2>
             <ConnectInfo env={env} />
           </section>
+
+          {env.networkMode === "loadBalancer" && (
+            <section className="card">
+              <h2>Exposed ports</h2>
+              <Ports env={env} />
+            </section>
+          )}
 
           <section className="card wide">
             <h2>Events</h2>
@@ -283,13 +298,25 @@ function ConnectInfo({ env }: { env: Environment }) {
   if (!ssh) return null;
   if (env.ip) {
     const cmd = `ssh dev@${env.ip}`;
+    const config = [`Host devenv-${env.name}`, `  HostName ${env.ip}`, `  User dev`].join("\n");
     return (
       <div className="connect">
-        <div className="small muted">SSH (dedicated IP)</div>
+        <div className="small muted">SSH (dedicated IP{env.networkMode === "multus" ? ", all ports open" : ""})</div>
         <div className="codeline">
           <code>{cmd}</code>
           <CopyButton text={cmd} />
         </div>
+        <details>
+          <summary className="small">~/.ssh/config (VS Code / JetBrains remote)</summary>
+          <pre className="block">{config}</pre>
+          <CopyButton text={config} />
+        </details>
+        {ssh.enabled && (
+          <div className="small muted">
+            Also via gateway: <code>ssh -p {ssh.port} {env.name}@{ssh.host || window.location.hostname}</code>
+          </div>
+        )}
+        <div className="small muted">Authorized keys: {env.sshAuthorizedKeys.length}</div>
       </div>
     );
   }
@@ -374,4 +401,15 @@ function Events({ name }: { name: string }) {
       </tbody>
     </table>
   );
+}
+
+function networkLabel(mode?: string) {
+  switch (mode) {
+    case "multus":
+      return "Dedicated IP (all ports)";
+    case "loadBalancer":
+      return "Load balancer IP";
+    default:
+      return "SSH gateway";
+  }
 }

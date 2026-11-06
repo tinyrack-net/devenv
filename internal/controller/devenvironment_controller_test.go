@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 
@@ -318,13 +320,95 @@ func TestPodOverrides(t *testing.T) {
 	}
 }
 
-func TestUnsupportedNetworkMode(t *testing.T) {
+func TestLoadBalancerMode(t *testing.T) {
 	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{
-		Network: devenvv1.NetworkSpec{Mode: devenvv1.NetworkModeLoadBalancer},
+		Network: devenvv1.NetworkSpec{
+			Mode: devenvv1.NetworkModeLoadBalancer,
+			LoadBalancer: &devenvv1.LoadBalancerSpec{
+				Labels:      map[string]string{"pool": "lan"},
+				Annotations: map[string]string{"lb.example/ip": "auto"},
+			},
+		},
+	}, false)
+	env := f.env("dev1")
+	env.Spec.Ports = []devenvv1.Port{{Port: 8080, Protocol: "TCP"}, {Port: 22, Protocol: "TCP"}, {Port: 53, Protocol: "UDP"}}
+	must(t, k8sClient.Create(testCtx, env))
+
+	svc := &corev1.Service{}
+	eventually(t, func() error { return get(svc, f.ns, "dev1-lb") })
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer || svc.Labels["pool"] != "lan" || svc.Annotations["lb.example/ip"] != "auto" {
+		t.Errorf("service = %+v", svc.ObjectMeta)
+	}
+	if len(svc.Spec.Ports) != 3 {
+		t.Errorf("ports = %+v (ssh, 8080/tcp, 53/udp expected)", svc.Spec.Ports)
+	}
+
+	// The load balancer assigns an address.
+	svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "192.0.2.10"}}
+	must(t, k8sClient.Status().Update(testCtx, svc))
+	eventually(t, func() error {
+		cur := &devenvv1.DevEnvironment{}
+		if err := get(cur, f.ns, "dev1"); err != nil {
+			return err
+		}
+		if cur.Status.IP != "192.0.2.10" || cur.Status.NetworkMode != devenvv1.NetworkModeLoadBalancer {
+			return fmt.Errorf("status ip=%q mode=%q", cur.Status.IP, cur.Status.NetworkMode)
+		}
+		return nil
+	})
+
+	// Stopping keeps the address.
+	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
+	env.Spec.Running = ptr.To(false)
+	must(t, k8sClient.Update(testCtx, env))
+	cur := waitPhase(t, env, devenvv1.PhaseStopped)
+	if cur.Status.IP != "192.0.2.10" {
+		t.Errorf("ip lost on stop: %q", cur.Status.IP)
+	}
+	must(t, get(&corev1.Service{}, f.ns, "dev1-lb"))
+}
+
+func TestMultusMode(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{
+		Network: devenvv1.NetworkSpec{
+			Mode:   devenvv1.NetworkModeMultus,
+			Multus: &devenvv1.MultusSpec{NetworkAttachment: "kube-system/lan", StableMAC: true},
+		},
 	}, false)
 	env := f.env("dev1")
 	must(t, k8sClient.Create(testCtx, env))
-	waitPhase(t, env, devenvv1.PhaseFailed)
+
+	pod := &corev1.Pod{}
+	eventually(t, func() error { return get(pod, f.ns, "dev1") })
+	var sel []multusSelection
+	if err := json.Unmarshal([]byte(pod.Annotations[annotationNetworks]), &sel); err != nil || len(sel) != 1 {
+		t.Fatalf("networks annotation = %q", pod.Annotations[annotationNetworks])
+	}
+	must(t, k8sClient.Get(testCtx, client.ObjectKeyFromObject(env), env))
+	if sel[0].Namespace != "kube-system" || sel[0].Name != "lan" || sel[0].Interface != "net1" || sel[0].MAC != stableMAC(env) {
+		t.Errorf("selection = %+v", sel[0])
+	}
+	if mac, _ := net.ParseMAC(sel[0].MAC); mac[0]&0x02 == 0 || mac[0]&0x01 != 0 {
+		t.Errorf("mac %s must be locally administered unicast", sel[0].MAC)
+	}
+
+	// Multus reports the attachment.
+	pod.Annotations[annotationNetworkStatus] = `[{"name":"cilium","interface":"eth0","ips":["10.0.0.5"],"default":true},` +
+		`{"name":"kube-system/lan","interface":"net1","ips":["fe80::1","192.168.1.50"],"mac":"` + sel[0].MAC + `"}]`
+	must(t, k8sClient.Update(testCtx, pod))
+	eventually(t, func() error {
+		cur := &devenvv1.DevEnvironment{}
+		if err := get(cur, f.ns, "dev1"); err != nil {
+			return err
+		}
+		if cur.Status.IP != "192.168.1.50" || cur.Status.MAC != sel[0].MAC {
+			return fmt.Errorf("ip=%q mac=%q", cur.Status.IP, cur.Status.MAC)
+		}
+		return nil
+	})
+	if err := get(&corev1.Service{}, f.ns, "dev1-lb"); !apierrors.IsNotFound(err) {
+		t.Errorf("no lb service expected in multus mode: %v", err)
+	}
 }
 
 func TestCELValidation(t *testing.T) {

@@ -52,6 +52,9 @@ type Environment struct {
 	ImageRef    string         `json:"imageRef,omitempty"`
 	NodeName    string         `json:"nodeName,omitempty"`
 	IP          string         `json:"ip,omitempty"`
+	MAC         string         `json:"mac,omitempty"`
+	NetworkMode string         `json:"networkMode,omitempty"`
+	Ports       []PortInput    `json:"ports"`
 	SSHKeys     []string       `json:"sshAuthorizedKeys"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	Deleting    bool           `json:"deleting"`
@@ -65,8 +68,16 @@ type CreateEnvironmentRequest struct {
 	Class     string         `json:"class,omitempty"`
 	Resources ResourcesInput `json:"resources"`
 	// SSHKeys defaults to all stored user keys when nil.
-	SSHKeys *[]string `json:"sshAuthorizedKeys,omitempty"`
-	Running *bool     `json:"running,omitempty"`
+	SSHKeys *[]string   `json:"sshAuthorizedKeys,omitempty"`
+	Running *bool       `json:"running,omitempty"`
+	Ports   []PortInput `json:"ports,omitempty"`
+}
+
+// PortInput is a port exposed in loadBalancer network mode.
+type PortInput struct {
+	Port     int32  `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 // UpdateEnvironmentRequest patches an environment. Nil fields are unchanged.
@@ -75,6 +86,7 @@ type UpdateEnvironmentRequest struct {
 	Resources *ResourcesInput `json:"resources,omitempty"`
 	SSHKeys   *[]string       `json:"sshAuthorizedKeys,omitempty"`
 	Running   *bool           `json:"running,omitempty"`
+	Ports     *[]PortInput    `json:"ports,omitempty"`
 }
 
 // SSHKey is a stored public key of the user.

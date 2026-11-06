@@ -79,10 +79,19 @@ export interface Environment {
   desktop: boolean;
   nodeName?: string;
   ip?: string;
+  mac?: string;
+  networkMode?: "gateway" | "loadBalancer" | "multus";
+  ports: PortSpec[];
   sshAuthorizedKeys: string[];
   createdAt: string;
   deleting: boolean;
   serviceName?: string;
+}
+
+export interface PortSpec {
+  port: number;
+  protocol?: "TCP" | "UDP";
+  name?: string;
 }
 
 export interface CreateEnvironment {
@@ -92,6 +101,7 @@ export interface CreateEnvironment {
   resources: Resources;
   sshAuthorizedKeys?: string[];
   running?: boolean;
+  ports?: PortSpec[];
 }
 
 export interface UpdateEnvironment {
@@ -99,6 +109,7 @@ export interface UpdateEnvironment {
   resources?: Resources;
   sshAuthorizedKeys?: string[];
   running?: boolean;
+  ports?: PortSpec[];
 }
 
 export interface SSHKey {

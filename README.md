@@ -21,7 +21,8 @@ Expose the console with `ingress.*` or `httpRoute.*`, and the SSH gateway with
 `sshService.type=LoadBalancer` (or `NodePort`). Then connect with
 `ssh -p 2222 <environment>@<host>`.
 
-See [docs/images.md](docs/images.md) to build your own environment images.
+See [docs/images.md](docs/images.md) to build your own environment images and
+[docs/networking.md](docs/networking.md) for dedicated IPs (LoadBalancer, Multus/DHCP).
 
 ## Development
 

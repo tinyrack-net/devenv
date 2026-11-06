@@ -120,6 +120,11 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
+	ports, err := fromPortInputs(in.Ports)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
 	user := auth.UserFrom(r.Context())
 
 	var keys []string
@@ -148,6 +153,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 			Resources:         res,
 			Running:           ptr.To(in.Running == nil || *in.Running),
 			SSHAuthorizedKeys: keys,
+			Ports:             ports,
 		},
 	}
 	// Name is set but there is no pod yet, so excluding it is harmless.
@@ -194,6 +200,14 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Running != nil {
 		env.Spec.Running = ptr.To(*in.Running)
+	}
+	if in.Ports != nil {
+		ports, err := fromPortInputs(*in.Ports)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		env.Spec.Ports = ports
 	}
 
 	imageChanged := env.Spec.ImageRef != before.Spec.ImageRef

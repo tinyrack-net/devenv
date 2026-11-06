@@ -104,9 +104,47 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 		Desktop:     e.Status.Desktop,
 		NodeName:    e.Status.NodeName,
 		IP:          e.Status.IP,
+		MAC:         e.Status.MAC,
+		NetworkMode: string(e.Status.NetworkMode),
+		Ports:       toPortInputs(e.Spec.Ports),
 		SSHKeys:     keys,
 		CreatedAt:   e.CreationTimestamp.Time,
 		Deleting:    !e.DeletionTimestamp.IsZero(),
 		ServiceName: e.Status.ServiceName,
 	}
+}
+
+func toPortInputs(ps []devenvv1.Port) []PortInput {
+	out := make([]PortInput, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, PortInput{Port: p.Port, Protocol: p.Protocol, Name: p.Name})
+	}
+	return out
+}
+
+func fromPortInputs(in []PortInput) ([]devenvv1.Port, error) {
+	if len(in) > 64 {
+		return nil, badRequest("at most 64 ports")
+	}
+	seen := map[string]bool{}
+	out := make([]devenvv1.Port, 0, len(in))
+	for _, p := range in {
+		proto := p.Protocol
+		if proto == "" {
+			proto = "TCP"
+		}
+		if proto != "TCP" && proto != "UDP" {
+			return nil, badRequest(fmt.Sprintf("invalid protocol %q", p.Protocol))
+		}
+		if p.Port < 1 || p.Port > 65535 {
+			return nil, badRequest(fmt.Sprintf("invalid port %d", p.Port))
+		}
+		key := fmt.Sprintf("%s/%d", proto, p.Port)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, devenvv1.Port{Port: p.Port, Protocol: proto, Name: p.Name})
+	}
+	return out, nil
 }

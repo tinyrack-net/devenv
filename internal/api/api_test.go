@@ -331,3 +331,21 @@ func TestSPAFallback(t *testing.T) {
 		t.Errorf("unknown api route: %d", rec.Code)
 	}
 }
+
+func TestPorts(t *testing.T) {
+	h := newHarness(t)
+	var env Environment
+	h.do("POST", "/api/v1/environments", CreateEnvironmentRequest{
+		Name: "web", Image: "base",
+		Ports: []PortInput{{Port: 3000}, {Port: 3000}, {Port: 53, Protocol: "UDP", Name: "dns"}},
+	}, 201, &env)
+	if len(env.Ports) != 2 || env.Ports[0].Protocol != "TCP" || env.Ports[1].Name != "dns" {
+		t.Errorf("ports = %+v", env.Ports)
+	}
+	h.do("PATCH", "/api/v1/environments/web", UpdateEnvironmentRequest{Ports: &[]PortInput{{Port: 70000}}}, 400, nil)
+	h.do("PATCH", "/api/v1/environments/web", UpdateEnvironmentRequest{Ports: &[]PortInput{{Port: 80, Protocol: "SCTP"}}}, 400, nil)
+	h.do("PATCH", "/api/v1/environments/web", UpdateEnvironmentRequest{Ports: &[]PortInput{}}, 200, &env)
+	if len(env.Ports) != 0 {
+		t.Errorf("ports not cleared: %+v", env.Ports)
+	}
+}
