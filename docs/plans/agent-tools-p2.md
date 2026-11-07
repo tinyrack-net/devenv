@@ -60,3 +60,11 @@
 - 연결 풀: 따뜻한 `exec` 왕복 20-40ms.
 - 데스크탑: 서버측 RFB 클라이언트(Raw 인코딩). 캡처 약 10ms. 한글 입력은 유니코드 keysym으로 된다.
 - 이미지 미리 받기: DaemonSet이 이미지들을 image volume으로 마운트하고 서버 이미지(`devenv-agent sleep`)만 실행한다.
+
+## 홈랩 배포 (v0.8.0, 2026-11-07)
+
+- 첫 생성 시간(agent 이미지): 미리 받기 없음 35.5초(이미지 받기 20.4초) → 미리 받기 14.9초. 남은 시간은 대부분 Longhorn 볼륨 생성·연결(약 12초).
+- Bifrost: `devenv` 클라이언트를 code mode 해제로 재등록(`839dd4ed-e090-4af2-894b-0d6c1dff7f0b`). 전용 Virtual MCP `devenv`(id 6, slug `devenv-tools`, 가상 키 `dev`)를 만들고 `dev`·`personal`에서는 뺐다. slug `devenv`는 클라이언트 endpoint_slug와 충돌해서 쓸 수 없다. Virtual MCP 생성 API는 `virtual_key_ids`를 무시하므로 `POST /api/mcp/virtual-mcps/{id}/virtual-keys/{vk}`로 따로 붙인다.
+- 직접 모드에서 이미지(스크린샷, `read_file` 이미지)가 MCP 클라이언트까지 그대로 온다.
+- OpenWebUI(0.12.5): 도구 서버 `devenv`(`https://llm.winetree94.com/mcp/devenv-tools`, 기존 `dev` 연결과 같은 키)를 관리자 API로 등록. 도구 결과 이미지는 vision 모델에 `input_image`로 전달된다.
+- OpenWebUI 시험 중 발견: Longhorn 디스크가 예약 한도(578G 예약 / 500G 최대, 과다 할당 150%)에 걸려 새 볼륨이 `faulted`가 됐다. 환경이 Starting에서 멈추고 `create_environment`가 대기하다가 Bifrost의 120초 제한에 걸렸다.
