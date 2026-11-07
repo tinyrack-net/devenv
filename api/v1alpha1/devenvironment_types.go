@@ -10,9 +10,14 @@ const DefaultClassName = "default"
 // DevEnvironmentSpec defines the desired state of DevEnvironment.
 // +kubebuilder:validation:XValidation:rule="has(self.className) == has(oldSelf.className) && (!has(self.className) || self.className == oldSelf.className)",message="className is immutable"
 type DevEnvironmentSpec struct {
-	// Owner identifies the user owning this environment.
+	// Owner is the DevUser owning this environment.
 	// +optional
 	Owner string `json:"owner,omitempty"`
+
+	// Sharing grants other users access (connect, start, stop). Only the
+	// owner and admins can change the environment.
+	// +optional
+	Sharing Access `json:"sharing,omitempty"`
 
 	// ImageRef is the name of a DevImage.
 	// +kubebuilder:validation:MinLength=1
@@ -145,6 +150,7 @@ type DevEnvironmentStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=denv
+// +kubebuilder:printcolumn:name="Owner",type=string,JSONPath=`.spec.owner`
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.imageRef`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="IP",type=string,JSONPath=`.status.ip`

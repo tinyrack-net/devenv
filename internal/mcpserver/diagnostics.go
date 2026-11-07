@@ -125,37 +125,34 @@ type restartIn struct {
 }
 
 func (s *Server) restartEnvironment(ctx context.Context, _ *mcp.CallToolRequest, in restartIn) (*mcp.CallToolResult, envOut, error) {
-	env, err := s.getEnv(ctx, in.Name)
+	pod := &corev1.Pod{}
+	_ = s.API.Reader.Get(ctx, client.ObjectKey{Namespace: s.API.Namespace, Name: in.Name}, pod)
+	s.pool().Forget(in.Name)
+	// The controller recreates the pod; the home volume is kept.
+	env, err := s.API.Restart(ctx, who(ctx), in.Name)
 	if err != nil {
 		return nil, envOut{}, userErr(err)
 	}
-	if !env.IsRunning() {
-		return nil, envOut{}, errorf("environment %s is stopped; use start_environment", in.Name)
-	}
-	pod := &corev1.Pod{}
-	if err := s.API.Reader.Get(ctx, client.ObjectKey{Namespace: s.API.Namespace, Name: in.Name}, pod); err != nil {
-		return nil, envOut{}, userErr(err)
-	}
-	s.pool().Forget(in.Name)
-	// The controller recreates the pod; the home volume is kept.
-	if err := s.API.Client.Delete(ctx, pod, client.Preconditions{UID: &pod.UID}); client.IgnoreNotFound(err) != nil {
-		return nil, envOut{}, userErr(err)
-	}
+	note := "restarted: processes were stopped; files in /home/dev are kept"
 	if boolDefault(in.Wait, true) {
 		// Wait for the new pod, then for Running.
-		deadline := time.Now().Add(time.Minute)
-		for time.Now().Before(deadline) {
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) && pod.UID != "" {
 			np := &corev1.Pod{}
 			if err := s.API.Reader.Get(ctx, client.ObjectKey{Namespace: s.API.Namespace, Name: in.Name}, np); err == nil && np.UID != pod.UID {
 				break
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		if env, err = s.waitFor(ctx, in.Name, true); err != nil {
+		var wnote string
+		if env, wnote, err = s.waitSoft(ctx, in.Name, true); err != nil {
 			return nil, envOut{}, err
 		}
+		if wnote != "" {
+			note += "; " + wnote
+		}
 	}
-	return nil, envOut{Environment: s.view(env), Note: "restarted: processes were stopped; files in /home/dev are kept"}, nil
+	return nil, envOut{Environment: s.view(env), Note: note}, nil
 }
 
 func (s *Server) registerDiagnostics(srv *mcp.Server) {

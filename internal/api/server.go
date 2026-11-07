@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -12,12 +13,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/config"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/tokens"
+	"github.com/tinyrack-net/devenv/internal/users"
 )
 
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironmentclasses,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=list
 
 // Server serves the REST API and the SPA.
@@ -27,22 +33,47 @@ type Server struct {
 	// Reader is an uncached reader for cluster wide reads (nodes, pods, events).
 	Reader    client.Reader
 	Namespace string
-	Auth      auth.Authenticator
+	Config    *config.Config
 	Sessions  *auth.Sessions
-	Capacity  *capacity.Checker
+	Users     *users.Store
+	Tokens    *tokens.Store
+	// OIDC providers by id.
+	OIDC     map[string]*auth.OIDC
+	Capacity *capacity.Checker
 	// Static serves the SPA. May be nil.
 	Static  fs.FS
 	Version string
 	// Dialer connects to environments for the web terminal and VNC.
 	Dialer *sshclient.Dialer
+	// Pool shares SSH connections with MCP (helper calls, terminal sessions).
+	Pool *sshclient.Pool
 	// SSH describes the public SSH gateway endpoint.
 	SSH SSHInfo
+	// Activity records agent tool calls. May be nil.
+	Activity *activity.Log
+	// Events fans out environment changes to /api/v1/stream. May be nil.
+	Events *Broker
+	// HelperImage is shown in the admin system page.
+	HelperImage string
+	// Handlers mounted under /api/v1/ by other packages (workspace APIs).
+	Extra map[string]http.Handler
+}
+
+// Middleware returns the authentication middleware for API requests.
+func (s *Server) Middleware() *auth.Middleware {
+	m := &auth.Middleware{Sessions: s.Sessions, Resolver: s}
+	if s.Config.Auth.Disabled {
+		m.Anonymous = &auth.Principal{Name: s.Config.Auth.Password.Username, Admin: true, Method: "none"}
+	}
+	return m
 }
 
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/me", s.me)
+	api.HandleFunc("PATCH /api/v1/me", s.updateMe)
+	api.HandleFunc("GET /api/v1/me/usage", s.myUsage)
 
 	api.HandleFunc("GET /api/v1/images", s.listImages)
 	api.HandleFunc("POST /api/v1/images", s.createImage)
@@ -51,6 +82,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/images/{name}", s.deleteImage)
 
 	api.HandleFunc("GET /api/v1/classes", s.listClasses)
+	api.HandleFunc("GET /api/v1/classes/{name}", s.getClass)
+	api.HandleFunc("PUT /api/v1/classes/{name}/access", s.updateClassAccess)
 	api.HandleFunc("GET /api/v1/classes/{name}/capacity", s.classCapacity)
 
 	api.HandleFunc("GET /api/v1/environments", s.listEnvironments)
@@ -60,7 +93,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/environments/{name}", s.deleteEnvironment)
 	api.HandleFunc("POST /api/v1/environments/{name}/start", s.startEnvironment)
 	api.HandleFunc("POST /api/v1/environments/{name}/stop", s.stopEnvironment)
+	api.HandleFunc("POST /api/v1/environments/{name}/restart", s.restartEnvironment)
 	api.HandleFunc("GET /api/v1/environments/{name}/events", s.environmentEvents)
+	api.HandleFunc("GET /api/v1/environments/{name}/activity", s.environmentActivity)
 	api.HandleFunc("GET /api/v1/environments/{name}/terminal", s.terminal)
 	api.HandleFunc("GET /api/v1/environments/{name}/vnc", s.vnc)
 
@@ -68,11 +103,35 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/sshkeys", s.createSSHKey)
 	api.HandleFunc("DELETE /api/v1/sshkeys/{id}", s.deleteSSHKey)
 
+	api.HandleFunc("GET /api/v1/tokens", s.listTokens)
+	api.HandleFunc("POST /api/v1/tokens", s.createToken)
+	api.HandleFunc("DELETE /api/v1/tokens/{id}", s.deleteToken)
+
+	api.HandleFunc("GET /api/v1/users", s.listUsers)
+	api.HandleFunc("GET /api/v1/stream", s.stream)
+
+	// Admin.
+	api.HandleFunc("POST /api/v1/admin/users", s.adminCreateUser)
+	api.HandleFunc("GET /api/v1/admin/users/{name}", s.adminGetUser)
+	api.HandleFunc("PATCH /api/v1/admin/users/{name}", s.adminUpdateUser)
+	api.HandleFunc("DELETE /api/v1/admin/users/{name}", s.adminDeleteUser)
+	api.HandleFunc("GET /api/v1/admin/tokens", s.adminListTokens)
+	api.HandleFunc("DELETE /api/v1/admin/tokens/{id}", s.adminDeleteToken)
+	api.HandleFunc("GET /api/v1/admin/activity", s.adminActivity)
+	api.HandleFunc("GET /api/v1/admin/system", s.adminSystem)
+
+	s.registerWorkspace(api)
+	for pattern, h := range s.Extra {
+		api.Handle(pattern, h)
+	}
+
 	root := http.NewServeMux()
 	root.HandleFunc("GET /api/v1/info", s.info)
 	root.HandleFunc("POST /api/v1/login", s.login)
 	root.HandleFunc("POST /api/v1/logout", s.logout)
-	root.Handle("/api/", auth.Middleware(s.Auth, s.Sessions, api))
+	root.HandleFunc("GET /api/v1/auth/oidc/{id}/login", s.oidcLogin)
+	root.HandleFunc("GET /api/v1/auth/oidc/{id}/callback", s.oidcCallback)
+	root.Handle("/api/", s.Middleware().Wrap(api))
 	root.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	if s.Static != nil {
 		root.Handle("/", spaHandler(s.Static))
@@ -112,37 +171,16 @@ func spaHandler(static fs.FS) http.Handler {
 	})
 }
 
-func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, Info{AuthMode: s.Auth.Mode(), Namespace: s.Namespace, Version: s.Version, SSH: s.SSH})
-}
+// principal returns the authenticated caller (always set behind the middleware).
+func principal(r *http.Request) *auth.Principal { return auth.From(r.Context()) }
 
-func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, auth.UserFrom(r.Context()))
-}
-
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+// requireAdmin writes 403 unless the caller is an admin.
+func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if p := principal(r); p == nil || !p.Admin {
+		writeError(w, http.StatusForbidden, "administrator role required")
+		return false
 	}
-	if !decode(w, r, &req) {
-		return
-	}
-	u, err := s.Auth.Login(r.Context(), req.Username, req.Password)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
-		return
-	}
-	if err := s.Sessions.SetCookie(w, u); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, u)
-}
-
-func (s *Server) logout(w http.ResponseWriter, _ *http.Request) {
-	s.Sessions.ClearCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	return true
 }
 
 // --- helpers ---
@@ -154,7 +192,11 @@ type httpError struct {
 
 func (e *httpError) Error() string { return e.msg }
 
-func badRequest(format string) error { return &httpError{http.StatusBadRequest, format} }
+func badRequest(msg string) error { return &httpError{http.StatusBadRequest, msg} }
+func forbidden(msg string) error  { return &httpError{http.StatusForbidden, msg} }
+
+// errNotFound hides resources the caller can not see.
+var errNotFound = &httpError{http.StatusNotFound, "not found"}
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -182,6 +224,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	case apierrors.IsForbidden(err):
 		writeError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, context.Canceled):
 	default:
 		logf.FromContext(r.Context()).Error(err, "request failed", "path", r.URL.Path)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -27,6 +27,9 @@ const (
 	indexImageRef  = "spec.imageRef"
 	indexClassName = "spec.className"
 	indexPassword  = "spec.passwordSecretName"
+	// indexAccess lists the users ("u:<name>") and groups ("g:<name>")
+	// whose SSH keys an environment accepts.
+	indexAccess = "access"
 )
 
 // DevEnvironmentReconciler reconciles DevEnvironment objects.
@@ -46,7 +49,7 @@ type DevEnvironmentReconciler struct {
 
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironments/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages;devenvironmentclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages;devenvironmentclasses;devusers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods;services;secrets;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -140,8 +143,25 @@ func (r *DevEnvironmentReconciler) resolve(ctx context.Context, env *devenvv1.De
 	return &resolved{env: env, image: image, class: class}, "", nil
 }
 
+// accessKeys returns the SSH keys of the owner and of the users the
+// environment is shared with (directly or through a group). Disabled users
+// are skipped.
+func (r *DevEnvironmentReconciler) accessKeys(ctx context.Context, env *devenvv1.DevEnvironment) ([]string, error) {
+	list := &devenvv1.DevUserList{}
+	if err := r.List(ctx, list); err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return devenvv1.AccessKeys(list.Items, env), nil
+}
+
 func (r *DevEnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolved) error {
-	var extra []string
+	extra, err := r.accessKeys(ctx, rs.env)
+	if err != nil {
+		return err
+	}
 	if r.GatewayAuthorizedKey != "" {
 		extra = append(extra, r.GatewayAuthorizedKey)
 	}
@@ -161,7 +181,7 @@ func (r *DevEnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolve
 		pwHash, pwSource = "", ""
 	}
 	rs.env.Status.PasswordSet = pwHash != ""
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
 		priv, pub := obj.Data[HostKeyFile], obj.Data[HostPublicKeyFile]
 		if len(priv) == 0 || len(pub) == 0 {
 			var err error
@@ -439,6 +459,20 @@ func (r *DevEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	if err := idx.IndexField(ctx, &devenvv1.DevEnvironment{}, indexAccess, func(o client.Object) []string {
+		e := o.(*devenvv1.DevEnvironment)
+		out := []string{"u:" + e.Spec.Owner}
+		for _, u := range e.Spec.Sharing.Users {
+			out = append(out, "u:"+u)
+		}
+		for _, g := range e.Spec.Sharing.Groups {
+			out = append(out, "g:"+g)
+		}
+		return out
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&devenvv1.DevEnvironment{}).
 		Owns(&corev1.Pod{}).
@@ -448,8 +482,36 @@ func (r *DevEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&devenvv1.DevImage{}, handler.EnqueueRequestsFromMapFunc(r.mapBy(indexImageRef))).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapPasswordSecret)).
 		Watches(&devenvv1.DevEnvironmentClass{}, handler.EnqueueRequestsFromMapFunc(r.mapBy(indexClassName))).
+		Watches(&devenvv1.DevUser{}, handler.EnqueueRequestsFromMapFunc(r.mapUser)).
 		Named("devenvironment").
 		Complete(r)
+}
+
+// mapUser enqueues environments whose authorized keys depend on a user
+// (owned, shared with the user or one of the user's groups).
+func (r *DevEnvironmentReconciler) mapUser(ctx context.Context, o client.Object) []reconcile.Request {
+	u := o.(*devenvv1.DevUser)
+	keys := []string{"u:" + u.Name}
+	for _, g := range u.Status.Groups {
+		keys = append(keys, "g:"+g)
+	}
+	seen := map[types.NamespacedName]bool{}
+	var reqs []reconcile.Request
+	for _, k := range keys {
+		list := &devenvv1.DevEnvironmentList{}
+		if err := r.List(ctx, list, client.MatchingFields{indexAccess: k}); err != nil {
+			logf.FromContext(ctx).Error(err, "list environments for user", "user", u.Name)
+			continue
+		}
+		for _, e := range list.Items {
+			n := client.ObjectKeyFromObject(&e)
+			if !seen[n] {
+				seen[n] = true
+				reqs = append(reqs, reconcile.Request{NamespacedName: n})
+			}
+		}
+	}
+	return reqs
 }
 
 // mapPasswordSecret enqueues environments referencing a password Secret.

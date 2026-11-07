@@ -32,9 +32,13 @@ import (
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/api"
 	"github.com/tinyrack-net/devenv/internal/auth"
+	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/config"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/tokens"
+	"github.com/tinyrack-net/devenv/internal/users"
 )
 
 const testToken = "dvm_test-token"
@@ -154,6 +158,7 @@ func buildHelper(t *testing.T) string {
 }
 
 type harness struct {
+	srv     *Server
 	t       *testing.T
 	c       client.Client
 	session *mcp.ClientSession
@@ -181,7 +186,8 @@ func newHarness(t *testing.T) *harness {
 	envHost, serverKey := signer(t), signer(t)
 	sshdAddr := localSSHD(t, envHost, serverKey.PublicKey())
 
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&devenvv1.DevEnvironment{}).WithObjects(
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&devenvv1.DevEnvironment{}, &devenvv1.DevUser{}).WithObjects(
+		&devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: "admin"}, Spec: devenvv1.DevUserSpec{Role: devenvv1.RoleAdmin}},
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
 			Status: corev1.NodeStatus{
@@ -200,12 +206,16 @@ func newHarness(t *testing.T) *harness {
 			return (&net.Dialer{}).DialContext(ctx, network, sshdAddr)
 		},
 	}
+	cfg := &config.Config{Auth: config.Auth{Password: config.Password{Password: "pw"}}}
+	cfg.MCP.LegacyToken.Token = testToken
+	cfg.Defaults()
 	apiSrv := &api.Server{
-		Client: c, Reader: c, Namespace: "devenv",
-		Auth: &auth.PasswordAuthenticator{Username: "admin", Password: "pw"}, Sessions: sessions,
+		Client: c, Reader: c, Namespace: "devenv", Config: cfg, Sessions: sessions,
+		Users:    &users.Store{Client: c, Config: cfg},
+		Tokens:   &tokens.Store{Client: c, Namespace: "devenv-system"},
 		Capacity: &capacity.Checker{Reader: c, Namespace: "devenv"}, Dialer: dialer,
 	}
-	m := &Server{API: apiSrv, Dialer: dialer, Token: testToken}
+	m := &Server{API: apiSrv, Dialer: dialer, Resolver: apiSrv, Activity: &activity.Log{}}
 	ts := httptest.NewServer(m.Handler())
 	t.Cleanup(ts.Close)
 
@@ -235,7 +245,7 @@ func newHarness(t *testing.T) *harness {
 		}
 	}()
 
-	h := &harness{t: t, c: c, url: ts.URL}
+	h := &harness{t: t, c: c, url: ts.URL, srv: m}
 	cl := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
 	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
 		Endpoint:   ts.URL,
@@ -255,6 +265,27 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+// connectAs opens a second MCP session with a personal token of user.
+func (h *harness) connectAs(user string, role devenvv1.Role) *harness {
+	h.t.Helper()
+	_ = h.c.Create(context.Background(), &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: user}, Spec: devenvv1.DevUserSpec{Role: role}})
+	_, plain, err := h.srv.API.Tokens.Create(context.Background(), user, "agent", []string{tokens.ScopeMCP}, 0)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	cl := mcp.NewClient(&mcp.Implementation{Name: "test-" + user}, nil)
+	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: h.url, HTTPClient: &http.Client{Transport: bearer{plain}},
+	}, nil)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.t.Cleanup(func() { sess.Close() })
+	out := *h
+	out.session = sess
+	return &out
 }
 
 // call invokes a tool and decodes its structured output.
@@ -343,7 +374,7 @@ func TestLifecycleAndExec(t *testing.T) {
 	}
 	obj := &devenvv1.DevEnvironment{}
 	_ = h.c.Get(context.Background(), client.ObjectKey{Namespace: "devenv", Name: "agent1"}, obj)
-	if obj.Spec.Owner != "mcp" || obj.Labels[LabelCreatedBy] != "mcp" {
+	if obj.Spec.Owner != "admin" || obj.Labels[LabelCreatedBy] != "mcp" {
 		t.Errorf("owner/labels = %q %v", obj.Spec.Owner, obj.Labels)
 	}
 
@@ -434,5 +465,50 @@ func TestBuildCommand(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(out), "o'k|two words|/") {
 		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPerUserTokens(t *testing.T) {
+	h := newHarness(t)
+	alice := h.connectAs("alice", devenvv1.RoleUser)
+	bob := h.connectAs("bob", devenvv1.RoleUser)
+
+	var out envOut
+	if isErr, text := alice.call("create_environment", map[string]any{"name": "a1", "image": "base"}, &out); isErr {
+		t.Fatal(text)
+	}
+	if out.Environment.Owner != "alice" {
+		t.Fatalf("owner %q", out.Environment.Owner)
+	}
+	var list listEnvsOut
+	bob.call("list_environments", map[string]any{}, &list)
+	if len(list.Environments) != 0 {
+		t.Fatalf("bob sees %+v", list)
+	}
+	if isErr, text := bob.call("exec", map[string]any{"name": "a1", "command": "true"}, nil); !isErr || !strings.Contains(text, "not found") {
+		t.Fatalf("bob exec on alice's env: %v %s", isErr, text)
+	}
+	if isErr, _ := bob.call("delete_environment", map[string]any{"name": "a1"}, nil); !isErr {
+		t.Fatal("bob deleted alice's env")
+	}
+	var ex execOut
+	if isErr, text := alice.call("exec", map[string]any{"name": "a1", "command": "echo hi-alice"}, &ex); isErr || !strings.Contains(ex.Stdout, "hi-alice") {
+		t.Fatalf("alice exec: %s %+v", text, ex)
+	}
+	// The legacy token acts as the admin, who sees everything with all.
+	h.call("list_environments", map[string]any{"all": true}, &list)
+	if len(list.Environments) != 1 {
+		t.Fatalf("admin all: %+v", list)
+	}
+	// Tool calls are in the activity log with user and summary.
+	entries := h.srv.Activity.List("a1", 10, nil)
+	var found bool
+	for _, e := range entries {
+		if e.Tool == "exec" && e.User == "alice" && e.Summary == "echo hi-alice" && strings.Contains(e.Detail, "hi-alice") && !e.Running {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("activity %+v", entries)
 	}
 }

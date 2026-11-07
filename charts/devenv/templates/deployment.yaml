@@ -15,9 +15,11 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "devenv.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
@@ -32,6 +34,7 @@ spec:
           image: {{ include "devenv.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            - --config=/etc/devenv/devenv.yaml
             - --environment-namespace={{ .Values.environments.namespace }}
             - --leader-elect={{ gt (int .Values.replicaCount) 1 }}
             - --zap-log-level={{ .Values.logLevel }}
@@ -51,34 +54,12 @@ spec:
               value: {{ .Values.sshService.publicHost | quote }}
             - name: DEVENV_SSH_PUBLIC_PORT
               value: {{ .Values.sshService.publicPort | default (ternary .Values.sshService.nodePort .Values.sshService.port (and (eq .Values.sshService.type "NodePort") (not (empty .Values.sshService.nodePort)))) | quote }}
-            - name: DEVENV_AUTH_MODE
-              value: {{ .Values.auth.mode | quote }}
-            - name: DEVENV_ADMIN_USERNAME
-              value: {{ .Values.auth.adminUsername | quote }}
-            - name: DEVENV_SECURE_COOKIES
-              value: {{ .Values.secureCookies | quote }}
             - name: DEVENV_KEYS_SECRET
               value: {{ include "devenv.fullname" . }}-keys
-            {{- if eq .Values.auth.mode "password" }}
-            - name: DEVENV_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "devenv.authSecretName" . }}
-                  key: password
-            {{- end }}
             # The server image also carries devenv-agent; environments mount
             # it read-only at /opt/devenv (image volume).
             - name: DEVENV_HELPER_IMAGE
               value: {{ if .Values.helper.enabled }}{{ include "devenv.image" . | quote }}{{ else }}""{{ end }}
-            - name: DEVENV_MCP_ENABLED
-              value: {{ .Values.mcp.enabled | quote }}
-            {{- with .Values.mcp.existingSecret }}
-            - name: DEVENV_MCP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . }}
-                  key: token
-            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -99,12 +80,57 @@ spec:
             httpGet:
               path: /readyz
               port: probes
+          volumeMounts:
+            - name: config
+              mountPath: /etc/devenv/devenv.yaml
+              subPath: devenv.yaml
+              readOnly: true
+            {{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
+            - name: admin-password
+              mountPath: /etc/devenv/secrets/admin
+              readOnly: true
+            {{- end }}
+            {{- if .Values.mcp.existingSecret }}
+            - name: mcp-token
+              mountPath: /etc/devenv/secrets/mcp
+              readOnly: true
+            {{- end }}
+            {{- range .Values.auth.oidc }}
+            {{- if .existingSecret }}
+            - name: oidc-{{ .id }}
+              mountPath: /etc/devenv/secrets/oidc-{{ .id }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
           resources: {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "devenv.fullname" . }}-config
+        {{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
+        - name: admin-password
+          secret:
+            secretName: {{ include "devenv.authSecretName" . }}
+            items: [{key: password, path: password}]
+        {{- end }}
+        {{- with .Values.mcp.existingSecret }}
+        - name: mcp-token
+          secret:
+            secretName: {{ . }}
+            items: [{key: token, path: token}]
+        {{- end }}
+        {{- range .Values.auth.oidc }}
+        {{- if .existingSecret }}
+        - name: oidc-{{ .id }}
+          secret:
+            secretName: {{ .existingSecret }}
+        {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

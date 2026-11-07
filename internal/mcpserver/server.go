@@ -9,7 +9,6 @@ package mcpserver
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,25 +17,26 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
+	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/tokens"
 )
 
-const (
-	// Owner recorded on environments created through MCP.
-	Owner = "mcp"
-	// LabelCreatedBy marks environments created through MCP.
-	LabelCreatedBy = "devenv.tinyrack.net/created-by"
-)
+// LabelCreatedBy marks environments created through MCP.
+const LabelCreatedBy = api.LabelCreatedBy
 
 // Server implements the MCP tools.
 type Server struct {
 	API    *api.Server
 	Dialer *sshclient.Dialer
-	// Token is the bearer token accepted on /mcp.
-	Token   string
-	Version string
+	// Resolver verifies bearer tokens (scope "mcp").
+	Resolver auth.Resolver
+	Version  string
+	// Activity receives tool calls. May be nil.
+	Activity *activity.Log
 
 	// Pool reuses SSH connections to environments. Created on demand.
 	Pool *sshclient.Pool
@@ -57,7 +57,8 @@ func (s *Server) pool() *sshclient.Pool {
 
 const instructions = `devenv provides isolated Linux development environments (containers on Kubernetes) for coding work.
 Workflow:
-1. create_environment with a unique name. Prefer the "agent" image when it exists (Go, Node.js/pnpm, Python/uv, gh, ripgrep preinstalled). It waits until running.
+1. create_environment with a unique name. Prefer the "agent" image when it exists (Go, Node.js/pnpm, Python/uv, gh, ripgrep preinstalled). It waits until running (about 90 seconds at most); if the result says it is still starting, poll get_environment.
+   Environments belong to the user of your access token; list_environments shows yours and those shared with you. A person may watch or join your work from the devenv console.
 2. Work inside it. The user is "dev" (home /home/dev, passwordless sudo). Relative paths are relative to /home/dev.
    - Files: read_file (line numbers + offset/limit), edit_file (exact text replacement, returns a diff), write_file (new files or full rewrites), list_dir.
    - Code search: search (ripgrep, respects .gitignore), find_files (glob).
@@ -84,15 +85,24 @@ func (s *Server) Handler() http.Handler {
 	return s.authenticate(h)
 }
 
+// authenticate resolves the bearer token to a user. Tools act with that
+// user's permissions.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || s.Token == "" || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(s.Token)) != 1 {
+		var p *auth.Principal
+		var err error
+		if ok {
+			p, err = s.Resolver.Token(r.Context(), strings.TrimSpace(token), tokens.ScopeMCP)
+		}
+		if !ok || err != nil || p == nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="devenv"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := auth.WithPrincipal(r.Context(), p)
+		ctx = context.WithValue(ctx, activityKey{}, s.Activity)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

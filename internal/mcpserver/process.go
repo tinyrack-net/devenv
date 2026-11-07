@@ -72,7 +72,7 @@ func (s *Server) startProcess(ctx context.Context, _ *mcp.CallToolRequest, in st
 	if cwd == "" {
 		cwd = homeDir
 	}
-	out, err := helper[agent.Output](s, ctx, in.Name, "start", agent.StartRequest{
+	out, err := callEnv[agent.Output](s, ctx, in.Name, "start", agent.StartRequest{
 		ID: id, Command: in.Command, Cwd: cwd, Env: in.Env,
 		WaitMs: waitMs(in.WaitSeconds), WaitFor: in.WaitFor, Limit: defaultReadOutput,
 	}, maxWait+30*time.Second)
@@ -84,19 +84,19 @@ func (s *Server) readProcessOutput(ctx context.Context, _ *mcp.CallToolRequest, 
 	if in.Offset != nil {
 		offset = max(*in.Offset, 0)
 	}
-	out, err := helper[agent.Output](s, ctx, in.Name, "read", agent.ReadRequest{
+	out, err := callEnv[agent.Output](s, ctx, in.Name, "read", agent.ReadRequest{
 		ID: in.ID, Offset: offset, Limit: readLimit(in.Limit), WaitMs: waitMs(in.WaitSeconds), WaitFor: in.WaitFor,
 	}, maxWait+30*time.Second)
 	return nil, out, err
 }
 
 func (s *Server) listProcesses(ctx context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, agent.ProcessList, error) {
-	out, err := helper[agent.ProcessList](s, ctx, in.Name, "list", struct{}{}, 30*time.Second)
+	out, err := callEnv[agent.ProcessList](s, ctx, in.Name, "list", struct{}{}, 30*time.Second)
 	return nil, out, err
 }
 
 func (s *Server) stopProcess(ctx context.Context, _ *mcp.CallToolRequest, in stopProcIn) (*mcp.CallToolResult, agent.Output, error) {
-	out, err := helper[agent.Output](s, ctx, in.Name, "stop", agent.StopRequest{ID: in.ID, Remove: in.Remove}, 40*time.Second)
+	out, err := callEnv[agent.Output](s, ctx, in.Name, "stop", agent.StopRequest{ID: in.ID, Remove: in.Remove}, 40*time.Second)
 	return nil, out, err
 }
 

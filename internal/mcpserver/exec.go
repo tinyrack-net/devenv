@@ -228,12 +228,12 @@ func (s *Server) connect(ctx context.Context, name string, autoStart bool) (*ssh
 			return nil, nil, errorf("environment %s is %s; start it with start_environment or pass auto_start", name, env.Status.Phase)
 		}
 		if !env.IsRunning() {
-			if _, err := s.API.SetRunning(ctx, name, true); err != nil {
+			if _, err := s.API.SetRunning(ctx, who(ctx), name, true); err != nil {
 				return nil, nil, userErr(err)
 			}
 		}
-		if _, err := s.waitFor(ctx, name, true); err != nil {
-			return nil, nil, err
+		if _, err := s.waitFor(ctx, name, true, WaitLimit); err != nil {
+			return nil, nil, userErr(err)
 		}
 	}
 	if !s.execLimiter.acquire(name) {

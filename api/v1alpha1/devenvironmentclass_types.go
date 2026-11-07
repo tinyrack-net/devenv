@@ -131,6 +131,11 @@ type DevEnvironmentClassSpec struct {
 	// +optional
 	Scheduling SchedulingSpec `json:"scheduling,omitempty"`
 
+	// Access limits the class to some groups or users. Empty means everyone.
+	// Admins can always use every class.
+	// +optional
+	Access Access `json:"access,omitempty"`
+
 	// PodOverrides is a strategic merge patch applied to the generated Pod.
 	// Escape hatch for anything not covered by the fields above.
 	// +kubebuilder:pruning:PreserveUnknownFields

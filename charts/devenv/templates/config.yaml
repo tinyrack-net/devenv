@@ -1,0 +1,41 @@
+{{- $oidc := list }}
+{{- range .Values.auth.oidc }}
+{{- $p := omit . "existingSecret" "secretKey" }}
+{{- if .existingSecret }}
+{{- $_ := set $p "clientSecretFile" (printf "/etc/devenv/secrets/oidc-%s/%s" .id (.secretKey | default "client-secret")) }}
+{{- end }}
+{{- $oidc = append $oidc $p }}
+{{- end }}
+{{- $password := dict "enabled" .Values.auth.passwordLogin "username" .Values.auth.adminUsername }}
+{{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
+{{- $_ := set $password "passwordFile" "/etc/devenv/secrets/admin/password" }}
+{{- end }}
+{{- $mcp := dict "enabled" .Values.mcp.enabled "legacyToken" (dict "enabled" .Values.mcp.legacyToken) }}
+{{- with .Values.mcp.legacyTokenUser }}{{ $_ := set $mcp.legacyToken "user" . }}{{ end }}
+{{- if .Values.mcp.existingSecret }}
+{{- $_ := set $mcp.legacyToken "tokenFile" "/etc/devenv/secrets/mcp/token" }}
+{{- end }}
+{{- $users := dict "defaultLimits" (.Values.users.defaultLimits | default dict) }}
+{{- with .Values.users.adminLimits }}{{ $_ := set $users "adminLimits" . }}{{ end }}
+{{- $cfg := dict
+  "server" (dict "externalURL" .Values.externalURL)
+  "auth" (dict
+    "disabled" (eq .Values.auth.mode "none")
+    "admins" .Values.auth.admins
+    "session" (dict "ttl" .Values.auth.sessionTTL "secureCookies" .Values.secureCookies)
+    "password" $password
+    "oidc" $oidc)
+  "users" $users
+  "mcp" $mcp
+  "preview" (dict "domain" .Values.preview.domain)
+}}
+{{- $cfg = mustMergeOverwrite $cfg (deepCopy .Values.config) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devenv.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+data:
+  devenv.yaml: |
+    {{- toYaml $cfg | nindent 4 }}

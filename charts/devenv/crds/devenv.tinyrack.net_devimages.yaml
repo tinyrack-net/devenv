@@ -23,6 +23,9 @@ spec:
     - jsonPath: .spec.desktop
       name: Desktop
       type: boolean
+    - jsonPath: .spec.owner
+      name: Owner
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -52,6 +55,25 @@ spec:
             description: DevImageSpec defines a container image that can be used for
               environments.
             properties:
+              access:
+                description: |-
+                  Access limits a shared image to some groups or users. Empty means
+                  everyone. Ignored for personal images.
+                properties:
+                  groups:
+                    description: Groups whose members may use the resource (identity
+                      provider groups).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  users:
+                    description: Users who may use the resource (DevUser names).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               defaultResources:
                 description: DefaultResources are used when an environment does not
                   specify resources.
@@ -103,6 +125,11 @@ spec:
                 type: string
               imagePullPolicy:
                 description: ImagePullPolicy for the image.
+                type: string
+              owner:
+                description: |-
+                  Owner makes the image personal: only the owner (and admins) can see
+                  and use it. Empty means a shared image managed by admins.
                 type: string
               prepull:
                 description: |-

@@ -1,7 +1,8 @@
 // Package gateway implements the SSH gateway.
 //
 // Users connect with `ssh -p 2222 <environment>@<host>`. The gateway
-// authenticates the public key against the environment's authorized keys,
+// authenticates the public key against the environment's own keys and the
+// keys of the users who can use it (owner and users it is shared with),
 // then opens its own SSH connection to the environment and relays channels
 // and requests in both directions. This supports shells, exec (scp, rsync,
 // VS Code / JetBrains remote), SFTP, agent forwarding, local (-L) and
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
@@ -33,6 +35,8 @@ type Gateway struct {
 	Addr    string
 	HostKey ssh.Signer
 	Dialer  *sshclient.Dialer
+	// Users lists DevUsers for key authentication. Optional.
+	Users func(ctx context.Context) ([]devenvv1.DevUser, error)
 	// Banner is shown before authentication. Optional.
 	Banner string
 
@@ -95,7 +99,13 @@ func (g *Gateway) authorize(ctx context.Context, user string, key ssh.PublicKey)
 		return nil, errors.New("unknown environment")
 	}
 	want := key.Marshal()
-	for _, line := range env.Spec.SSHAuthorizedKeys {
+	lines := env.Spec.SSHAuthorizedKeys
+	if g.Users != nil {
+		if users, err := g.Users(ctx); err == nil {
+			lines = append(append([]string{}, lines...), devenvv1.AccessKeys(users, env)...)
+		}
+	}
+	for _, line := range lines {
 		k, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
 		if err == nil && bytes.Equal(k.Marshal(), want) {
 			return &ssh.Permissions{Extensions: map[string]string{permEnv: env.Name}}, nil

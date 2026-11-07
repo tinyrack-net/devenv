@@ -1,74 +1,41 @@
 package mcpserver
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/tinyrack-net/devenv/internal/agent"
+	"github.com/tinyrack-net/devenv/internal/helper"
 )
 
 // errNoHelper means the environment does not have devenv-agent mounted.
-var errNoHelper = errors.New("helper unavailable")
-
-// helperPath is where the helper is mounted; a variable for tests.
-var helperPath = agent.Path
+var errNoHelper = helper.ErrUnavailable
 
 // callHelper runs one helper operation over a new session on the pooled
-// connection and decodes its result.
+// connection and decodes its result. Helper errors become tool errors.
 func callHelper[T any](ctx context.Context, sc *ssh.Client, op string, req any, timeout time.Duration) (T, error) {
-	var zero T
-	body, err := json.Marshal(req)
-	if err != nil {
-		return zero, err
+	helper.Path = helperPath
+	res, err := helper.Call[T](ctx, sc, op, req, timeout)
+	var he *helper.Error
+	switch {
+	case err == nil, errors.Is(err, helper.ErrUnavailable):
+		return res, err
+	case errors.As(err, &he):
+		return res, &toolError{he.Msg}
+	case errors.Is(err, context.Canceled):
+		return res, errorf("cancelled")
 	}
-	sess, err := sc.NewSession()
-	if err != nil {
-		return zero, errorf("open session: %v", err)
-	}
-	defer sess.Close()
-	var stdout, stderr bytes.Buffer
-	sess.Stdin = bytes.NewReader(body)
-	sess.Stdout = &stdout
-	sess.Stderr = &stderr
-
-	done := make(chan error, 1)
-	go func() { done <- sess.Run(shellQuote(helperPath) + " " + op) }()
-	select {
-	case err = <-done:
-	case <-time.After(timeout):
-		_ = sess.Signal(ssh.SIGKILL)
-		return zero, errorf("helper %s timed out after %s", op, timeout)
-	case <-ctx.Done():
-		_ = sess.Signal(ssh.SIGKILL)
-		return zero, errorf("cancelled")
-	}
-	if err != nil {
-		var ee *ssh.ExitError
-		// 126/127: the mount is missing or not executable.
-		if errors.As(err, &ee) && (ee.ExitStatus() == 127 || ee.ExitStatus() == 126) {
-			return zero, errNoHelper
-		}
-		return zero, errorf("helper %s failed: %v %s", op, err, strings.TrimSpace(stderr.String()))
-	}
-	var resp agent.Response[T]
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return zero, errorf("helper %s: invalid response: %v", op, err)
-	}
-	if !resp.OK {
-		return zero, &toolError{resp.Error}
-	}
-	return resp.Result, nil
+	return res, errorf("%v", err)
 }
 
+// helperPath is where the helper is mounted; a variable for tests.
+var helperPath = helper.Path
+
 // helper runs an operation in a (started) environment.
-func helper[T any](s *Server, ctx context.Context, name, op string, req any, timeout time.Duration) (T, error) {
+func callEnv[T any](s *Server, ctx context.Context, name, op string, req any, timeout time.Duration) (T, error) {
 	var zero T
 	sc, release, err := s.connect(ctx, name, true)
 	if err != nil {

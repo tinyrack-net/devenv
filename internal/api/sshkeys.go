@@ -1,34 +1,18 @@
 package api
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/tinyrack-net/devenv/internal/auth"
+	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 )
-
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-
-const sshKeysDataKey = "keys.json"
-
-// userConfigMapName returns the ConfigMap that stores a user's public keys.
-// Public keys are not secret, so a ConfigMap is sufficient.
-func userConfigMapName(user string) string {
-	sum := sha256.Sum256([]byte(user))
-	return "devenv-user-" + hex.EncodeToString(sum[:6])
-}
 
 func parseKey(raw string) (ssh.PublicKey, string, error) {
 	pk, comment, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(raw)))
@@ -63,60 +47,35 @@ func normalizeKeys(in []string) ([]string, error) {
 	return out, nil
 }
 
-func (s *Server) loadKeys(ctx context.Context, user string) ([]SSHKey, error) {
-	cm := &corev1.ConfigMap{}
-	err := s.Client.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: userConfigMapName(user)}, cm)
-	if apierrors.IsNotFound(err) {
-		return []SSHKey{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	keys := []SSHKey{}
-	if raw := cm.Data[sshKeysDataKey]; raw != "" {
-		if err := json.Unmarshal([]byte(raw), &keys); err != nil {
-			return nil, fmt.Errorf("decode ssh keys: %w", err)
-		}
-	}
-	return keys, nil
+func keyID(fp string) string {
+	sum := sha256.Sum256([]byte(fp))
+	return hex.EncodeToString(sum[:6])
 }
 
-func (s *Server) saveKeys(ctx context.Context, user string, keys []SSHKey) error {
-	b, err := json.Marshal(keys)
-	if err != nil {
-		return err
-	}
-	cm := &corev1.ConfigMap{}
-	key := client.ObjectKey{Namespace: s.Namespace, Name: userConfigMapName(user)}
-	err = s.Client.Get(ctx, key, cm)
-	if apierrors.IsNotFound(err) {
-		cm = &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: key.Name, Namespace: key.Namespace,
-				Labels:      map[string]string{"app.kubernetes.io/managed-by": "devenv", "devenv.tinyrack.net/component": "user"},
-				Annotations: map[string]string{"devenv.tinyrack.net/user": user},
-			},
-			Data: map[string]string{sshKeysDataKey: string(b)},
+func toSSHKeys(in []devenvv1.UserSSHKey) []SSHKey {
+	out := make([]SSHKey, 0, len(in))
+	for _, k := range in {
+		pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey))
+		if err != nil {
+			continue
 		}
-		return s.Client.Create(ctx, cm)
+		fp := ssh.FingerprintSHA256(pk)
+		sk := SSHKey{ID: keyID(fp), Name: k.Name, PublicKey: k.PublicKey, Fingerprint: fp}
+		if k.CreatedAt != nil {
+			sk.CreatedAt = k.CreatedAt.Time
+		}
+		out = append(out, sk)
 	}
-	if err != nil {
-		return err
-	}
-	if cm.Data == nil {
-		cm.Data = map[string]string{}
-	}
-	cm.Data[sshKeysDataKey] = string(b)
-	return s.Client.Update(ctx, cm)
+	return out
 }
 
 func (s *Server) listSSHKeys(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.loadKeys(r.Context(), auth.UserFrom(r.Context()).Name)
+	u, err := s.Users.Get(r.Context(), principal(r).Name)
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, keys)
+	writeJSON(w, http.StatusOK, toSSHKeys(u.Spec.SSHKeys))
 }
 
 func (s *Server) createSSHKey(w http.ResponseWriter, r *http.Request) {
@@ -132,14 +91,13 @@ func (s *Server) createSSHKey(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	user := auth.UserFrom(r.Context()).Name
-	keys, err := s.loadKeys(r.Context(), user)
+	u, err := s.Users.Get(r.Context(), principal(r).Name)
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
 	fp := ssh.FingerprintSHA256(pk)
-	for _, k := range keys {
+	for _, k := range toSSHKeys(u.Spec.SSHKeys) {
 		if k.Fingerprint == fp {
 			fail(w, r, &httpError{http.StatusConflict, "key already exists"})
 			return
@@ -152,38 +110,35 @@ func (s *Server) createSSHKey(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = pk.Type()
 	}
+	if len(name) > 100 {
+		name = name[:100]
+	}
 	line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pk)))
 	if comment != "" {
 		line += " " + comment
 	}
-	sum := sha256.Sum256([]byte(fp))
-	k := SSHKey{
-		ID:          hex.EncodeToString(sum[:6]),
-		Name:        name,
-		PublicKey:   line,
-		Fingerprint: fp,
-		CreatedAt:   time.Now().UTC().Truncate(time.Second),
-	}
-	keys = append(keys, k)
-	if err := s.saveKeys(r.Context(), user, keys); err != nil {
+	before := u.DeepCopy()
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	u.Spec.SSHKeys = append(u.Spec.SSHKeys, devenvv1.UserSSHKey{Name: name, PublicKey: line, CreatedAt: &now})
+	if err := s.Client.Patch(r.Context(), u, client.MergeFrom(before)); err != nil {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, k)
+	writeJSON(w, http.StatusCreated, SSHKey{ID: keyID(fp), Name: name, PublicKey: line, Fingerprint: fp, CreatedAt: now.Time})
 }
 
 func (s *Server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
-	user := auth.UserFrom(r.Context()).Name
-	keys, err := s.loadKeys(r.Context(), user)
+	u, err := s.Users.Get(r.Context(), principal(r).Name)
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
 	id := r.PathValue("id")
-	out := keys[:0]
+	before := u.DeepCopy()
+	out := []devenvv1.UserSSHKey{}
 	found := false
-	for _, k := range keys {
-		if k.ID == id {
+	for _, k := range u.Spec.SSHKeys {
+		if pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey)); err == nil && keyID(ssh.FingerprintSHA256(pk)) == id {
 			found = true
 			continue
 		}
@@ -193,7 +148,8 @@ func (s *Server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if err := s.saveKeys(r.Context(), user, out); err != nil {
+	u.Spec.SSHKeys = out
+	if err := s.Client.Patch(r.Context(), u, client.MergeFrom(before)); err != nil {
 		fail(w, r, err)
 		return
 	}

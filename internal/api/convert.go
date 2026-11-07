@@ -56,6 +56,9 @@ func toImage(i *devenvv1.DevImage, inUse int) Image {
 		Description:      i.Spec.Description,
 		Desktop:          i.Spec.Desktop,
 		Disabled:         i.Spec.Disabled,
+		Prepull:          i.Spec.Prepull,
+		Owner:            i.Spec.Owner,
+		Access:           toAccessInput(i.Spec.Access),
 		ImagePullPolicy:  string(i.Spec.ImagePullPolicy),
 		DefaultResources: toResourcesInput(i.Spec.DefaultResources),
 		CreatedAt:        i.CreationTimestamp.Time,
@@ -75,6 +78,7 @@ func toClass(c *devenvv1.DevEnvironmentClass) Class {
 			Disk:   qstr(c.Spec.Limits.MaxDisk),
 		},
 		Default: c.Name == devenvv1.DefaultClassName,
+		Access:  toAccessInput(c.Spec.Access),
 	}
 	if c.Spec.Storage.StorageClassName != nil {
 		out.StorageClass = *c.Spec.Storage.StorageClassName
@@ -112,7 +116,20 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 		CreatedAt:   e.CreationTimestamp.Time,
 		Deleting:    !e.DeletionTimestamp.IsZero(),
 		ServiceName: e.Status.ServiceName,
+		Sharing:     toAccessInput(e.Spec.Sharing),
+		CreatedBy:   e.Labels[LabelCreatedBy],
 	}
+}
+
+func toAccessInput(a devenvv1.Access) AccessInput {
+	out := AccessInput{Users: a.Users, Groups: a.Groups}
+	if out.Users == nil {
+		out.Users = []string{}
+	}
+	if out.Groups == nil {
+		out.Groups = []string{}
+	}
+	return out
 }
 
 func toPortInputs(ps []devenvv1.Port) []PortInput {

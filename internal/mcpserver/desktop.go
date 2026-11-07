@@ -71,11 +71,11 @@ func (s *Server) withDesktop(ctx context.Context, name string, fn func(*vnc.Clie
 		return errorf("environment %s has no desktop (image %s); create one with an image that has desktop true in list_images", name, env.Spec.ImageRef)
 	}
 	if env.Status.Phase != devenvv1.PhaseRunning {
-		if _, err := s.API.SetRunning(ctx, name, true); err != nil {
+		if _, err := s.API.SetRunning(ctx, who(ctx), name, true); err != nil {
 			return userErr(err)
 		}
-		if _, err := s.waitFor(ctx, name, true); err != nil {
-			return err
+		if _, err := s.waitFor(ctx, name, true, WaitLimit); err != nil {
+			return userErr(err)
 		}
 	}
 	s.desk.once.Do(func() {

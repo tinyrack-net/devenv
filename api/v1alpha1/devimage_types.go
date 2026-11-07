@@ -36,6 +36,16 @@ type DevImageSpec struct {
 	// +optional
 	Prepull bool `json:"prepull,omitempty"`
 
+	// Owner makes the image personal: only the owner (and admins) can see
+	// and use it. Empty means a shared image managed by admins.
+	// +optional
+	Owner string `json:"owner,omitempty"`
+
+	// Access limits a shared image to some groups or users. Empty means
+	// everyone. Ignored for personal images.
+	// +optional
+	Access Access `json:"access,omitempty"`
+
 	// Disabled hides the image from the console for new environments.
 	// Existing environments keep working.
 	// +optional
@@ -46,6 +56,7 @@ type DevImageSpec struct {
 // +kubebuilder:resource:scope=Cluster,shortName=dimg
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
 // +kubebuilder:printcolumn:name="Desktop",type=boolean,JSONPath=`.spec.desktop`
+// +kubebuilder:printcolumn:name="Owner",type=string,JSONPath=`.spec.owner`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DevImage is a catalog entry for a development environment image.

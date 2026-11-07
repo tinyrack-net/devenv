@@ -17,6 +17,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.owner
+      name: Owner
+      type: string
     - jsonPath: .spec.imageRef
       name: Image
       type: string
@@ -63,7 +66,7 @@ spec:
                 minLength: 1
                 type: string
               owner:
-                description: Owner identifies the user owning this environment.
+                description: Owner is the DevUser owning this environment.
                 type: string
               passwordSecretName:
                 description: |-
@@ -145,6 +148,25 @@ spec:
                   Running controls whether the environment pod exists.
                   Stopping keeps the home volume.
                 type: boolean
+              sharing:
+                description: |-
+                  Sharing grants other users access (connect, start, stop). Only the
+                  owner and admins can change the environment.
+                properties:
+                  groups:
+                    description: Groups whose members may use the resource (identity
+                      provider groups).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  users:
+                    description: Users who may use the resource (DevUser names).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               sshAuthorizedKeys:
                 description: SSHAuthorizedKeys are written to the environment's authorized_keys.
                 items:

@@ -26,3 +26,24 @@ const (
 	// DefaultDisk is applied when neither the environment, image nor class specify disk.
 	DefaultDisk = "10Gi"
 )
+
+// Access restricts who may use a shared resource. Empty means everyone.
+type Access struct {
+	// Groups whose members may use the resource (identity provider groups).
+	// +listType=set
+	// +optional
+	Groups []string `json:"groups,omitempty"`
+	// Users who may use the resource (DevUser names).
+	// +listType=set
+	// +optional
+	Users []string `json:"users,omitempty"`
+}
+
+// IsZero reports an unrestricted access list.
+func (a *Access) IsZero() bool { return a == nil || (len(a.Groups) == 0 && len(a.Users) == 0) }
+
+const (
+	// LabelOwner carries the owner of an environment or personal image for
+	// label selection.
+	LabelOwner = "devenv.tinyrack.net/owner"
+)

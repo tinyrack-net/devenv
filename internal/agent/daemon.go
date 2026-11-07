@@ -84,16 +84,19 @@ func (r *ringLog) read(offset int64, limit int) (string, int64, bool) {
 type daemon struct {
 	mu    sync.Mutex
 	procs map[string]*proc
+	ptys  ptyRegistry
 	// lastUse lets an idle daemon with no processes exit.
 	lastUse time.Time
 }
 
 type wireRequest struct {
-	Op    string          `json:"op"`
-	Start *StartRequest   `json:"start,omitempty"`
-	Read  *ReadRequest    `json:"read,omitempty"`
-	Stop  *StopRequest    `json:"stop,omitempty"`
-	Raw   json.RawMessage `json:"-"`
+	Op        string            `json:"op"`
+	Start     *StartRequest     `json:"start,omitempty"`
+	Read      *ReadRequest      `json:"read,omitempty"`
+	Stop      *StopRequest      `json:"stop,omitempty"`
+	PtyAttach *PtyAttachRequest `json:"pty_attach,omitempty"`
+	PtyKill   *PtyKillRequest   `json:"pty_kill,omitempty"`
+	PtyRename *PtyRenameRequest `json:"pty_rename,omitempty"`
 }
 
 // RunDaemon serves until idle for idleExit with no running processes.
@@ -134,6 +137,9 @@ func RunDaemon(idleExit time.Duration) error {
 }
 
 func (d *daemon) idle(after time.Duration) bool {
+	if d.ptys.count() > 0 {
+		return false
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, p := range d.procs {
@@ -152,12 +158,40 @@ func (d *daemon) serve(c net.Conn) {
 	d.mu.Lock()
 	d.lastUse = time.Now()
 	d.mu.Unlock()
+	// One JSON line, then (for pty-attach) a framed stream.
+	rd := bufio.NewReader(c)
+	line, err := rd.ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		writeResp[any](c, nil, err)
+		return
+	}
 	var req wireRequest
-	if err := json.NewDecoder(c).Decode(&req); err != nil {
+	if err := json.Unmarshal(line, &req); err != nil {
 		writeResp[any](c, nil, err)
 		return
 	}
 	switch req.Op {
+	case "pty-attach":
+		if req.PtyAttach == nil {
+			writeResp[any](c, nil, errors.New("missing pty_attach"))
+			return
+		}
+		d.ptys.attach(c, rd, *req.PtyAttach)
+	case "pty-list":
+		writeResp(c, d.ptys.list(), nil)
+	case "pty-kill":
+		if req.PtyKill == nil {
+			writeResp[any](c, nil, errors.New("missing pty_kill"))
+			return
+		}
+		writeResp[any](c, nil, d.ptys.kill(req.PtyKill.ID))
+	case "pty-rename":
+		if req.PtyRename == nil {
+			writeResp[any](c, nil, errors.New("missing pty_rename"))
+			return
+		}
+		out, err := d.ptys.rename(*req.PtyRename)
+		writeResp(c, out, err)
 	case "start":
 		out, err := d.start(*req.Start)
 		writeResp(c, out, err)

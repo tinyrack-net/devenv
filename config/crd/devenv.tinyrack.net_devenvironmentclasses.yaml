@@ -52,6 +52,25 @@ spec:
           spec:
             description: DevEnvironmentClassSpec adapts environments to the cluster.
             properties:
+              access:
+                description: |-
+                  Access limits the class to some groups or users. Empty means everyone.
+                  Admins can always use every class.
+                properties:
+                  groups:
+                    description: Groups whose members may use the resource (identity
+                      provider groups).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  users:
+                    description: Users who may use the resource (DevUser names).
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               limits:
                 description: Limits restricts what an environment of this class may
                   request.

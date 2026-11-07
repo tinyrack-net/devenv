@@ -8,11 +8,15 @@ metadata:
   labels: {{- include "devenv.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["devenv.tinyrack.net"]
-    resources: ["devimages"]
+    resources: ["devimages", "devusers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["devenv.tinyrack.net"]
+    resources: ["devusers/status"]
+    verbs: ["get", "update", "patch"]
+  # Class specs are managed by Helm/GitOps; the console only edits access.
+  - apiGroups: ["devenv.tinyrack.net"]
     resources: ["devenvironmentclasses"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
@@ -79,7 +83,7 @@ subjects:
     name: {{ $sa }}
     namespace: {{ .Release.Namespace }}
 ---
-# Release namespace: key Secret and leader election.
+# Release namespace: key Secret, access token Secrets and leader election.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -89,7 +93,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update"]
+    verbs: ["get", "list", "create", "update", "patch", "delete", "deletecollection"]
   - apiGroups: ["apps"]
     resources: ["daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

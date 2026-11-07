@@ -53,7 +53,7 @@ func (s *Server) search(ctx context.Context, _ *mcp.CallToolRequest, in searchIn
 	if err != nil {
 		return nil, searchOut{}, err
 	}
-	res, err := helper[agent.SearchResult](s, ctx, in.Name, "search", agent.SearchRequest{
+	res, err := callEnv[agent.SearchResult](s, ctx, in.Name, "search", agent.SearchRequest{
 		Pattern: in.Pattern, Path: p, Glob: in.Glob, IgnoreCase: in.IgnoreCase, FixedStrings: in.FixedStrings,
 		Context: in.Context, FilesOnly: in.FilesWithMatch, MaxResults: clampResults(in.MaxResults), IncludeIgnored: in.IncludeIgnored,
 	}, searchTimeout)
@@ -84,7 +84,7 @@ func (s *Server) findFiles(ctx context.Context, _ *mcp.CallToolRequest, in findI
 	if err != nil {
 		return nil, findOut{}, err
 	}
-	res, err := helper[agent.FindResult](s, ctx, in.Name, "find", agent.FindRequest{
+	res, err := callEnv[agent.FindResult](s, ctx, in.Name, "find", agent.FindRequest{
 		Pattern: in.Pattern, Path: p, MaxResults: clampResults(in.MaxResults), IncludeIgnored: in.IncludeIgnored,
 	}, searchTimeout)
 	if err != nil {

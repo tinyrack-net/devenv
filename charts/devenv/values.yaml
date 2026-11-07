@@ -23,13 +23,59 @@ environments:
   # { requests.cpu: "16", requests.memory: 64Gi, requests.storage: 500Gi }
   quota: {}
 
+# -- Public URL of the console, e.g. https://devenv.example.com. Required for
+# OIDC (callback URL: <externalURL>/api/v1/auth/oidc/<id>/callback).
+externalURL: ""
+
 auth:
-  # -- password or none (development only).
+  # -- password or none (development only: everyone is the local admin).
   mode: password
+  # -- Local administrator account. Keep it as a fallback even with OIDC, or
+  # disable it with passwordLogin: false.
   adminUsername: admin
+  passwordLogin: true
   # -- Existing Secret with key `password`. When empty a random password is
   # generated and kept across upgrades.
   existingSecret: ""
+  # -- User names or e-mail addresses that are always administrators.
+  admins: []
+  # -- Session lifetime.
+  sessionTTL: 168h
+  # -- OIDC providers. The client secret comes from an existing Secret
+  # (key `client-secret` unless secretKey is set). Example:
+  # - id: example
+  #   name: Example SSO
+  #   issuer: https://sso.example.com
+  #   clientID: devenv
+  #   existingSecret: devenv-oidc
+  #   secretKey: client-secret
+  #   scopes: [openid, profile, email, groups]
+  #   claims: {username: preferred_username, groups: groups}
+  #   autoCreate: true
+  #   allowedGroups: []
+  #   allowedEmails: []        # "*@example.com" matches a domain
+  #   adminGroups: []
+  oidc: []
+
+# -- Per-user limits. Empty fields are unlimited; admins are unlimited unless
+# adminLimits is set. Admins can override limits per user in the console.
+users:
+  defaultLimits: {}
+  #  maxEnvironments: 5
+  #  maxRunning: 3
+  #  cpu: "8"
+  #  memory: 32Gi
+  #  disk: 200Gi
+  adminLimits: null
+
+# -- Port previews at https://<port>-<env>.<domain> (needs wildcard DNS and TLS
+# routed to the console). Empty disables them.
+preview:
+  domain: ""
+
+# -- Extra configuration merged into the generated devenv.yaml (see
+# docs/configuration.md). Values set here win.
+config: {}
 
 # -- Create a default DevEnvironmentClass. Every environment without an
 # explicit class uses the class named "default".
@@ -117,10 +163,15 @@ httpRoute:
 helper:
   enabled: true
 
-# -- MCP endpoint (/mcp, Streamable HTTP) for AI agents.
+# -- MCP endpoint (/mcp, Streamable HTTP) for AI agents. Users create their
+# own access tokens in the console; tools act with that user's permissions.
 mcp:
   enabled: true
-  # -- Existing Secret with key `token` used as the bearer token. When empty
+  # -- Shared legacy token (single-user versions). It acts as legacyTokenUser.
+  # Set false once every agent uses a personal token.
+  legacyToken: true
+  legacyTokenUser: ""
+  # -- Existing Secret with key `token` used as the legacy token. When empty
   # a token is generated in the `<release>-keys` Secret (key `mcp-token`).
   existingSecret: ""
 

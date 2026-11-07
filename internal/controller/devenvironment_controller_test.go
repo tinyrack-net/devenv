@@ -594,3 +594,54 @@ func TestImagePrepull(t *testing.T) {
 		return nil
 	})
 }
+
+func TestUserKeys(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
+	owner := &devenvv1.DevUser{
+		ObjectMeta: metav1.ObjectMeta{Name: "owner-" + f.ns},
+		Spec:       devenvv1.DevUserSpec{SSHKeys: []devenvv1.UserSSHKey{{Name: "a", PublicKey: "ssh-ed25519 OWNR owner"}}},
+	}
+	friend := &devenvv1.DevUser{
+		ObjectMeta: metav1.ObjectMeta{Name: "friend-" + f.ns},
+		Spec:       devenvv1.DevUserSpec{SSHKeys: []devenvv1.UserSSHKey{{Name: "b", PublicKey: "ssh-ed25519 FRND friend"}}},
+	}
+	must(t, k8sClient.Create(testCtx, owner))
+	must(t, k8sClient.Create(testCtx, friend))
+	friend.Status.Groups = []string{"team-" + f.ns}
+	must(t, k8sClient.Status().Update(testCtx, friend))
+
+	env := f.env("keys")
+	env.Spec.Owner = owner.Name
+	must(t, k8sClient.Create(testCtx, env))
+	keysContain := func(want string, present bool) {
+		t.Helper()
+		eventually(t, func() error {
+			s := &corev1.Secret{}
+			if err := get(s, f.ns, "keys-ssh"); err != nil {
+				return err
+			}
+			if strings.Contains(string(s.Data[AuthorizedKeysFile]), want) != present {
+				return fmt.Errorf("authorized_keys %q: %s present=%v", s.Data[AuthorizedKeysFile], want, !present)
+			}
+			return nil
+		})
+	}
+	keysContain("OWNR", true)
+	keysContain("FRND", false)
+
+	// Sharing with the friend's group adds their key.
+	updateEnv(t, env, func() { env.Spec.Sharing.Groups = []string{"team-" + f.ns} })
+	keysContain("FRND", true)
+
+	// Changing a user's keys updates environments without touching them.
+	must(t, get(owner, "", owner.Name))
+	owner.Spec.SSHKeys = append(owner.Spec.SSHKeys, devenvv1.UserSSHKey{Name: "c", PublicKey: "ssh-ed25519 NEWK owner2"})
+	must(t, k8sClient.Update(testCtx, owner))
+	keysContain("NEWK", true)
+
+	// Disabled users lose access.
+	must(t, get(friend, "", friend.Name))
+	friend.Spec.Disabled = true
+	must(t, k8sClient.Update(testCtx, friend))
+	keysContain("FRND", false)
+}

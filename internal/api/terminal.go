@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,14 +17,25 @@ import (
 	"golang.org/x/crypto/ssh"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/tinyrack-net/devenv/internal/access"
+	"github.com/tinyrack-net/devenv/internal/agent"
 	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/helper"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
 // Terminal protocol (WebSocket):
 //   - binary messages: raw terminal bytes in both directions
 //   - text messages from the client: JSON control {"type":"resize","cols":N,"rows":N}
-//   - text messages from the server: JSON {"type":"exit","code":N} or {"type":"error","message":"..."}
+//   - text messages from the server:
+//     {"type":"session","session":{...}}  attached (persistent sessions)
+//     {"type":"exit","code":N}            the shell exited
+//     {"type":"error","message":"..."}
+//
+// Query: cols, rows, session (attach to an existing session id), new=1
+// (create a session; with session=<id> creates that id), name, command.
+// Persistent sessions need devenv-agent; without it every connection is a
+// fresh shell.
 type termControl struct {
 	Type string `json:"type"`
 	Cols int    `json:"cols,omitempty"`
@@ -74,15 +86,19 @@ func dialError(err error) string {
 
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
-	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
+	if _, _, err := s.Authorize(r.Context(), principal(r), name, access.Use); err != nil {
+		fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	cols, _ := strconv.Atoi(q.Get("cols"))
+	rows, _ := strconv.Atoi(q.Get("rows"))
 	if cols <= 0 || cols > 1000 {
 		cols = 80
 	}
 	if rows <= 0 || rows > 500 {
 		rows = 24
 	}
-
 	ws, ok := s.acceptWS(w, r)
 	if !ok {
 		return
@@ -90,7 +106,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	log := logf.FromContext(ctx).WithValues("environment", name)
+	log := logf.FromContext(ctx).WithValues("environment", name, "user", principal(r).Name)
 
 	sc, err := s.Dialer.Dial(ctx, name)
 	if err != nil {
@@ -102,6 +118,111 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sc.Close()
+
+	err = s.attachSession(ctx, ws, sc, agent.PtyAttachRequest{
+		ID: q.Get("session"), Create: q.Get("new") != "" || q.Get("session") == "",
+		Name: q.Get("name"), Command: q.Get("command"), Cols: cols, Rows: rows,
+	})
+	if errors.Is(err, helper.ErrUnavailable) {
+		s.plainShell(ctx, ws, sc, cols, rows)
+		return
+	}
+	if err != nil {
+		wsSendJSON(ctx, ws, map[string]string{"type": "error", "message": err.Error()})
+		ws.Close(websocket.StatusNormalClosure, "")
+	}
+}
+
+// attachSession bridges the WebSocket to a devenv-agent terminal session.
+func (s *Server) attachSession(ctx context.Context, ws *websocket.Conn, sc *ssh.Client, req agent.PtyAttachRequest) error {
+	sess, err := sc.NewSession()
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	stdin, _ := sess.StdinPipe()
+	stdout, _ := sess.StdoutPipe()
+	if err := sess.Start(helper.ShellQuote(helper.Path) + " pty-attach"); err != nil {
+		return err
+	}
+	line, _ := json.Marshal(map[string]any{"op": "pty-attach", "pty_attach": req})
+	if _, err := stdin.Write(append(line, '\n')); err != nil {
+		return err
+	}
+	rd := bufio.NewReader(stdout)
+	reply, err := rd.ReadBytes('\n')
+	if err != nil {
+		// The helper binary is missing: the shell reports 127 and closes.
+		if werr := sess.Wait(); werr != nil {
+			var ee *ssh.ExitError
+			if errors.As(werr, &ee) && (ee.ExitStatus() == 127 || ee.ExitStatus() == 126) {
+				return helper.ErrUnavailable
+			}
+		}
+		return fmt.Errorf("terminal session: %v", err)
+	}
+	var resp agent.Response[agent.PtySession]
+	if err := json.Unmarshal(reply, &resp); err != nil {
+		return fmt.Errorf("terminal session: invalid reply")
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	wsSendJSON(ctx, ws, map[string]any{"type": "session", "session": resp.Result})
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Daemon → browser.
+	go func() {
+		defer cancel()
+		for {
+			t, b, err := agent.ReadFrame(rd)
+			if err != nil {
+				return
+			}
+			switch t {
+			case agent.FrameData:
+				if err := ws.Write(ctx, websocket.MessageBinary, b); err != nil {
+					return
+				}
+			case agent.FrameExit:
+				var e struct{ Code int }
+				_ = json.Unmarshal(b, &e)
+				wsSendJSON(ctx, ws, map[string]any{"type": "exit", "code": e.Code})
+				ws.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+		}
+	}()
+	// Browser → daemon.
+	ws.SetReadLimit(1 << 20)
+	for {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			// Detach; the session keeps running.
+			_ = stdin.Close()
+			return nil
+		}
+		if typ == websocket.MessageBinary {
+			if err := agent.WriteFrame(stdin, agent.FrameData, data); err != nil {
+				return nil
+			}
+			continue
+		}
+		var ctl termControl
+		if json.Unmarshal(data, &ctl) == nil && ctl.Type == "resize" && ctl.Cols > 0 && ctl.Rows > 0 {
+			b, _ := json.Marshal(map[string]int{"cols": ctl.Cols, "rows": ctl.Rows})
+			if err := agent.WriteFrame(stdin, agent.FrameResize, b); err != nil {
+				return nil
+			}
+		}
+	}
+}
+
+// plainShell runs a login shell for this connection only (no helper).
+func (s *Server) plainShell(ctx context.Context, ws *websocket.Conn, sc *ssh.Client, cols, rows int) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	sess, err := sc.NewSession()
 	if err != nil {
 		wsSendJSON(ctx, ws, map[string]string{"type": "error", "message": err.Error()})
@@ -120,17 +241,13 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		wsSendJSON(ctx, ws, map[string]string{"type": "error", "message": "shell: " + err.Error()})
 		return
 	}
-	log.V(1).Info("terminal opened")
-
-	// Output: stdout+stderr -> websocket.
 	out := make(chan []byte, 16)
 	pump := func(rd io.Reader) {
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := rd.Read(buf)
 			if n > 0 {
-				b := make([]byte, n)
-				copy(b, buf[:n])
+				b := append([]byte(nil), buf[:n]...)
 				select {
 				case out <- b:
 				case <-ctx.Done():
@@ -157,8 +274,6 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-
-	// Input: websocket -> stdin / resize.
 	go func() {
 		defer cancel()
 		ws.SetReadLimit(1 << 20)
@@ -179,12 +294,10 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- sess.Wait() }()
 	select {
 	case err := <-waitErr:
-		// Let buffered output flush.
 		time.Sleep(100 * time.Millisecond)
 		code := 0
 		var ee *ssh.ExitError
@@ -201,7 +314,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 // server through SSH, so VNC only listens on localhost inside the environment.
 func (s *Server) vnc(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	env, err := s.getEnv(r.Context(), name)
+	env, _, err := s.Authorize(r.Context(), principal(r), name, access.Use)
 	if err != nil {
 		fail(w, r, err)
 		return

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,18 +21,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/config"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/gateway"
 	"github.com/tinyrack-net/devenv/internal/keys"
 	"github.com/tinyrack-net/devenv/internal/mcpserver"
 	"github.com/tinyrack-net/devenv/internal/server"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/tokens"
+	"github.com/tinyrack-net/devenv/internal/users"
 	"github.com/tinyrack-net/devenv/web"
 )
 
@@ -52,67 +58,121 @@ func envOr(key, def string) string {
 	return def
 }
 
-func envInt(key string, def int) int {
-	if v, ok := os.LookupEnv(key); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
 // readSecret returns the value of an environment variable or the content of
-// the file named by KEY_FILE.
-func readSecret(key string) (string, error) {
+// the file named by KEY_FILE, and whether either was set.
+func readSecret(key string) (string, bool, error) {
 	if f := os.Getenv(key + "_FILE"); f != "" {
 		b, err := os.ReadFile(f)
 		if err != nil {
-			return "", fmt.Errorf("read %s_FILE: %w", key, err)
+			return "", true, fmt.Errorf("read %s_FILE: %w", key, err)
 		}
-		return strings.TrimSpace(string(b)), nil
+		return strings.TrimSpace(string(b)), true, nil
 	}
-	return os.Getenv(key), nil
+	v, ok := os.LookupEnv(key)
+	return v, ok, nil
+}
+
+// applyLegacy maps the flags and environment variables of earlier versions
+// onto the configuration. Explicitly set values override the file.
+func applyLegacy(cfg *config.Config, set map[string]bool, f *flags) error {
+	if v, ok := os.LookupEnv("DEVENV_AUTH_MODE"); ok || set["auth-mode"] {
+		if set["auth-mode"] {
+			v = f.authMode
+		}
+		switch v {
+		case "password":
+		case "none":
+			cfg.Auth.Disabled = true
+		default:
+			return fmt.Errorf("unknown auth mode %q", v)
+		}
+	}
+	if v, ok := os.LookupEnv("DEVENV_ADMIN_USERNAME"); ok && v != "" {
+		cfg.Auth.Password.Username = v
+	}
+	if set["admin-username"] {
+		cfg.Auth.Password.Username = f.adminUser
+	}
+	if v, ok := os.LookupEnv("DEVENV_SECURE_COOKIES"); ok {
+		cfg.Auth.Session.SecureCookies = v == "true"
+	}
+	if set["secure-cookies"] {
+		cfg.Auth.Session.SecureCookies = f.secureCookies
+	}
+	if pw, ok, err := readSecret("DEVENV_ADMIN_PASSWORD"); err != nil {
+		return err
+	} else if ok && pw != "" {
+		cfg.Auth.Password.Password = pw
+	}
+	if v, ok := os.LookupEnv("DEVENV_MCP_ENABLED"); ok {
+		cfg.MCP.Enabled = new(v == "true")
+	}
+	if set["mcp"] {
+		cfg.MCP.Enabled = new(f.mcpEnabled)
+	}
+	if t, ok, err := readSecret("DEVENV_MCP_TOKEN"); err != nil {
+		return err
+	} else if ok && t != "" {
+		cfg.MCP.LegacyToken.Token = t
+	}
+	if v, ok := os.LookupEnv("DEVENV_SSH_PUBLIC_HOST"); ok && v != "" {
+		cfg.SSH.PublicHost = v
+	}
+	if v, ok := os.LookupEnv("DEVENV_SSH_PUBLIC_PORT"); ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.SSH.PublicPort = n
+		}
+	}
+	if set["ssh-public-host"] {
+		cfg.SSH.PublicHost = f.sshPublicHost
+	}
+	if set["ssh-public-port"] {
+		cfg.SSH.PublicPort = f.sshPublicPort
+	}
+	if v, ok := os.LookupEnv("DEVENV_EXTERNAL_URL"); ok && v != "" {
+		cfg.Server.ExternalURL = v
+	}
+	return nil
+}
+
+type flags struct {
+	metricsAddr, probeAddr, httpAddr, sshAddr string
+	sshPublicHost                             string
+	sshPublicPort                             int
+	mcpEnabled                                bool
+	helperImage                               string
+	leaderElect                               bool
+	envNamespace, leaderNamespace             string
+	authMode, serverNamespace, keysSecret     string
+	adminUser                                 string
+	secureCookies                             bool
+	configFile                                string
 }
 
 func main() {
-	var (
-		metricsAddr     string
-		probeAddr       string
-		httpAddr        string
-		sshAddr         string
-		sshPublicHost   string
-		sshPublicPort   int
-		mcpEnabled      bool
-		helperImage     string
-		leaderElect     bool
-		envNamespace    string
-		leaderNamespace string
-		authMode        string
-		serverNamespace string
-		keysSecret      string
-		adminUser       string
-		secureCookies   bool
-	)
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address. \"0\" disables it.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8082", "Health probe endpoint address.")
-	flag.StringVar(&httpAddr, "http-bind-address", envOr("DEVENV_HTTP_ADDR", ":8080"), "API and web console address. Empty disables it.")
-	flag.StringVar(&sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
-	flag.StringVar(&sshPublicHost, "ssh-public-host", envOr("DEVENV_SSH_PUBLIC_HOST", ""), "Host users connect to for SSH. Empty uses the web console host.")
-	flag.IntVar(&sshPublicPort, "ssh-public-port", envInt("DEVENV_SSH_PUBLIC_PORT", 2222), "Port users connect to for SSH.")
-	flag.StringVar(&helperImage, "helper-image", envOr("DEVENV_HELPER_IMAGE", ""), "Image mounted into environments at /opt/devenv to provide devenv-agent (usually the server image). Empty disables the helper.")
-	flag.BoolVar(&mcpEnabled, "mcp", envOr("DEVENV_MCP_ENABLED", "true") == "true", "Serve the MCP endpoint at /mcp.")
-	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
-	flag.StringVar(&envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"),
-		"Namespace where environments live.")
-	flag.StringVar(&leaderNamespace, "leader-election-namespace", os.Getenv("POD_NAMESPACE"), "Namespace for the leader election lease.")
-	flag.StringVar(&authMode, "auth-mode", envOr("DEVENV_AUTH_MODE", "password"), "Authentication mode: password or none (development only).")
-	flag.StringVar(&adminUser, "admin-username", envOr("DEVENV_ADMIN_USERNAME", "admin"), "Admin username for password auth.")
-	flag.BoolVar(&secureCookies, "secure-cookies", envOr("DEVENV_SECURE_COOKIES", "false") == "true", "Set the Secure flag on session cookies (enable behind HTTPS).")
-	flag.StringVar(&serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server, used for its key Secret. Defaults to the environment namespace.")
-	flag.StringVar(&keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding generated server keys.")
+	var f flags
+	flag.StringVar(&f.configFile, "config", envOr("DEVENV_CONFIG", ""), "Configuration file (YAML). See docs/configuration.md.")
+	flag.StringVar(&f.metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address. \"0\" disables it.")
+	flag.StringVar(&f.probeAddr, "health-probe-bind-address", ":8082", "Health probe endpoint address.")
+	flag.StringVar(&f.httpAddr, "http-bind-address", envOr("DEVENV_HTTP_ADDR", ":8080"), "API and web console address. Empty disables it.")
+	flag.StringVar(&f.sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
+	flag.StringVar(&f.sshPublicHost, "ssh-public-host", "", "Host users connect to for SSH (overrides ssh.publicHost).")
+	flag.IntVar(&f.sshPublicPort, "ssh-public-port", 0, "Port users connect to for SSH (overrides ssh.publicPort).")
+	flag.StringVar(&f.helperImage, "helper-image", envOr("DEVENV_HELPER_IMAGE", ""), "Image mounted into environments at /opt/devenv to provide devenv-agent (usually the server image). Empty disables the helper.")
+	flag.BoolVar(&f.mcpEnabled, "mcp", true, "Serve the MCP endpoint at /mcp (overrides mcp.enabled).")
+	flag.BoolVar(&f.leaderElect, "leader-elect", false, "Enable leader election.")
+	flag.StringVar(&f.envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"), "Namespace where environments live.")
+	flag.StringVar(&f.leaderNamespace, "leader-election-namespace", os.Getenv("POD_NAMESPACE"), "Namespace for the leader election lease.")
+	flag.StringVar(&f.authMode, "auth-mode", "password", "Deprecated: password or none (auth.disabled).")
+	flag.StringVar(&f.adminUser, "admin-username", "admin", "Deprecated: auth.password.username.")
+	flag.BoolVar(&f.secureCookies, "secure-cookies", false, "Deprecated: auth.session.secureCookies.")
+	flag.StringVar(&f.serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server (key Secret, tokens). Defaults to the environment namespace.")
+	flag.StringVar(&f.keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding generated server keys.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	set := map[string]bool{}
+	flag.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	log := ctrl.Log.WithName("setup")
@@ -121,35 +181,57 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Namespaced objects are cached in the environment namespace.
-	cacheOpts := cache.Options{DefaultNamespaces: map[string]cache.Config{envNamespace: {}}}
+	cfg, err := config.Load(f.configFile)
+	if err != nil {
+		exit(err, "load configuration")
+	}
+	if err := cfg.ResolveSecrets(); err != nil {
+		exit(err, "read configuration secrets")
+	}
+	if err := applyLegacy(cfg, set, &f); err != nil {
+		exit(err, "apply flags")
+	}
+	cfg.Defaults()
 
-	cfg := ctrl.GetConfigOrDie()
+	envNamespace := f.envNamespace
+	serverNamespace := f.serverNamespace
 	if serverNamespace == "" {
 		serverNamespace = envNamespace
 	}
-	// The image prepull DaemonSet lives in the server namespace; only that
-	// type is cached there (the server has no other rights in it).
+
+	// Namespaced objects are cached in the environment namespace; the server
+	// namespace holds the prepull DaemonSet and token Secrets.
+	cacheOpts := cache.Options{DefaultNamespaces: map[string]cache.Config{envNamespace: {}}}
 	cacheOpts.ByObject = map[client.Object]cache.ByObject{
 		&appsv1.DaemonSet{}: {Namespaces: map[string]cache.Config{serverNamespace: {}}},
 	}
 
-	// Uncached client for bootstrap and cluster wide reads (nodes, pods, events).
-	direct, err := client.New(cfg, client.Options{Scheme: scheme})
+	restCfg := ctrl.GetConfigOrDie()
+	direct, err := client.New(restCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		exit(err, "create client")
 	}
-	serverKeys, err := keys.Ensure(context.Background(), direct, serverNamespace, keysSecret)
+	serverKeys, err := keys.Ensure(context.Background(), direct, serverNamespace, f.keysSecret)
 	if err != nil {
 		exit(err, "bootstrap server keys")
 	}
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+	if cfg.MCP.LegacyToken.Token == "" {
+		cfg.MCP.LegacyToken.Token = serverKeys.MCPToken
+	}
+	if err := cfg.Validate(); err != nil {
+		exit(err, "invalid configuration")
+	}
+	if cfg.Auth.Disabled {
+		log.Info("WARNING: authentication is disabled; every request acts as the local administrator")
+	}
+
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                  scheme,
-		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress:  probeAddr,
-		LeaderElection:          leaderElect,
+		Metrics:                 metricsserver.Options{BindAddress: f.metricsAddr},
+		HealthProbeBindAddress:  f.probeAddr,
+		LeaderElection:          f.leaderElect,
 		LeaderElectionID:        "devenv.tinyrack.net",
-		LeaderElectionNamespace: leaderNamespace,
+		LeaderElectionNamespace: f.leaderNamespace,
 		Cache:                   cacheOpts,
 	})
 	if err != nil {
@@ -162,62 +244,90 @@ func main() {
 		Recorder: mgr.GetEventRecorder("devenv"),
 
 		GatewayAuthorizedKey:  serverKeys.ClientAuthorizedKey(),
-		HelperImage:           helperImage,
+		HelperImage:           f.helperImage,
 		HelperImagePullPolicy: corev1.PullIfNotPresent,
 	}).SetupWithManager(mgr); err != nil {
 		exit(err, "setup controller")
 	}
 
-	// Environment connections read the environment and its Secret through the
-	// cache (namespaced to the environment namespace).
-	dialer := &sshclient.Dialer{
-		Client:    mgr.GetClient(),
-		Namespace: envNamespace,
-		Signer:    serverKeys.ClientKey,
-	}
-	if sshAddr != "" {
-		if err := mgr.Add(&gateway.Gateway{Addr: sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer}); err != nil {
+	userStore := &users.Store{Client: mgr.GetClient(), Config: cfg}
+	// Tokens live in the server namespace, which the cache does not cover;
+	// read them directly (one GET per token request).
+	tokenStore := &tokens.Store{Client: direct, Namespace: serverNamespace}
+
+	dialer := &sshclient.Dialer{Client: mgr.GetClient(), Namespace: envNamespace, Signer: serverKeys.ClientKey}
+	pool := &sshclient.Pool{Dialer: dialer}
+	if f.sshAddr != "" {
+		if err := mgr.Add(&gateway.Gateway{
+			Addr: f.sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer,
+			Users: func(ctx context.Context) ([]devenvv1.DevUser, error) { return userStore.List(ctx) },
+		}); err != nil {
 			exit(err, "add ssh gateway")
 		}
 	}
 
-	if httpAddr != "" {
-		var authenticator auth.Authenticator
-		switch authMode {
-		case "password":
-			pw, err := readSecret("DEVENV_ADMIN_PASSWORD")
-			if err != nil {
-				exit(err, "read admin password")
-			}
-			if pw == "" {
-				exit(fmt.Errorf("DEVENV_ADMIN_PASSWORD or DEVENV_ADMIN_PASSWORD_FILE is required"), "configure auth")
-			}
-			authenticator = &auth.PasswordAuthenticator{Username: adminUser, Password: pw}
-		case "none":
-			log.Info("WARNING: authentication is disabled")
-			authenticator = &auth.NoneAuthenticator{Username: adminUser}
-		default:
-			exit(fmt.Errorf("unknown auth mode %q", authMode), "configure auth")
+	// One-time data migration from single-user versions, after the cache
+	// starts (the user store reads through it).
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return nil
 		}
-		sessions, err := auth.NewSessions(serverKeys.SessionKey, secureCookies)
+		for attempt := 0; ; attempt++ {
+			err := userStore.Migrate(ctx, direct, envNamespace)
+			if err == nil {
+				return nil
+			}
+			log.Error(err, "migrate data (retrying)")
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(10 * time.Second):
+			}
+		}
+	})); err != nil {
+		exit(err, "add migration")
+	}
+
+	if f.httpAddr != "" {
+		sessions, err := auth.NewSessions(serverKeys.SessionKey, cfg.Auth.Session.SecureCookies)
 		if err != nil {
 			exit(err, "create sessions")
 		}
-		reader := direct
-
+		sessions.TTL = cfg.Auth.Session.TTL.Duration
+		oidcs := map[string]*auth.OIDC{}
+		for _, p := range cfg.Auth.OIDC {
+			oidcs[p.ID] = &auth.OIDC{Config: auth.OIDCConfig{
+				ID: p.ID, Issuer: p.Issuer, ClientID: p.ClientID, ClientSecret: p.ClientSecret, Scopes: p.Scopes,
+				RedirectURL: strings.TrimRight(cfg.Server.ExternalURL, "/") + "/api/v1/auth/oidc/" + p.ID + "/callback",
+				Claims:      auth.ClaimNames{Username: p.Claims.Username, Email: p.Claims.Email, Name: p.Claims.Name, Groups: p.Claims.Groups},
+			}}
+			log.Info("OIDC provider configured", "id", p.ID, "issuer", p.Issuer)
+		}
+		acts := &activity.Log{}
+		broker := &api.Broker{}
+		if err := broker.Watch(context.Background(), mgr.GetCache()); err != nil {
+			exit(err, "watch environments")
+		}
 		srv := &api.Server{
-			Client:    mgr.GetClient(),
-			Reader:    reader,
-			Namespace: envNamespace,
-			Auth:      authenticator,
-			Sessions:  sessions,
-			Capacity:  &capacity.Checker{Reader: reader, Namespace: envNamespace},
-			Static:    web.Dist(),
-			Dialer:    dialer,
+			Client:      mgr.GetClient(),
+			Reader:      direct,
+			Namespace:   envNamespace,
+			Config:      cfg,
+			Sessions:    sessions,
+			Users:       userStore,
+			Tokens:      tokenStore,
+			OIDC:        oidcs,
+			Capacity:    &capacity.Checker{Reader: direct, Namespace: envNamespace},
+			Static:      web.Dist(),
+			Dialer:      dialer,
+			Pool:        pool,
+			Activity:    acts,
+			Events:      broker,
+			HelperImage: f.helperImage,
 			SSH: api.SSHInfo{
-				Enabled:     sshAddr != "",
-				Host:        sshPublicHost,
-				Port:        sshPublicPort,
+				Enabled:     f.sshAddr != "",
+				Host:        cfg.SSH.PublicHost,
+				Port:        cfg.SSH.PublicPort,
 				HostKey:     strings.TrimSpace(string(ssh.MarshalAuthorizedKey(serverKeys.HostKey.PublicKey()))),
 				Fingerprint: ssh.FingerprintSHA256(serverKeys.HostKey.PublicKey()),
 			},
@@ -227,29 +337,21 @@ func main() {
 			log.Info("web console assets not embedded; serving API only")
 		}
 		handler := srv.Handler()
-		if mcpEnabled {
-			token := serverKeys.MCPToken
-			if t, err := readSecret("DEVENV_MCP_TOKEN"); err != nil {
-				exit(err, "read mcp token")
-			} else if t != "" {
-				token = t
-			}
-			mcpSrv := &mcpserver.Server{
-				API: srv, Dialer: dialer, Token: token, Version: version,
-			}
+		if cfg.MCP.IsEnabled() {
+			mcpSrv := &mcpserver.Server{API: srv, Dialer: dialer, Pool: pool, Resolver: srv, Version: version, Activity: acts}
 			mux := http.NewServeMux()
 			mux.Handle("/mcp", mcpSrv.Handler())
 			mux.Handle("/", handler)
 			handler = mux
 			log.Info("MCP endpoint enabled", "path", "/mcp")
 		}
-		if err := mgr.Add(&server.HTTP{Addr: httpAddr, Handler: handler}); err != nil {
+		if err := mgr.Add(&server.HTTP{Addr: f.httpAddr, Handler: handler}); err != nil {
 			exit(err, "add http server")
 		}
 	}
 
-	if helperImage != "" {
-		if err := (&controller.PrepullReconciler{Client: mgr.GetClient(), Namespace: serverNamespace, Image: helperImage}).SetupWithManager(mgr); err != nil {
+	if f.helperImage != "" {
+		if err := (&controller.PrepullReconciler{Client: mgr.GetClient(), Namespace: serverNamespace, Image: f.helperImage}).SetupWithManager(mgr); err != nil {
 			exit(err, "setup image prepull")
 		}
 	}
@@ -261,7 +363,8 @@ func main() {
 		exit(err, "add readyz")
 	}
 
-	log.Info("starting manager", "version", version, "environmentNamespace", envNamespace, "http", httpAddr)
+	log.Info("starting manager", "version", version, "environmentNamespace", envNamespace, "http", f.httpAddr,
+		"passwordLogin", cfg.Auth.Password.IsEnabled(), "oidcProviders", len(cfg.Auth.OIDC))
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		exit(err, "run manager")
 	}

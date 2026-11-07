@@ -17,7 +17,7 @@ import (
 //	devenv-agent daemon    run the background process daemon
 func Main(args []string, build string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: devenv-agent <exec|search|find|stats|start|read|stop|list|version|daemon>")
+		fmt.Fprintln(os.Stderr, "usage: devenv-agent <exec|search|find|stats|start|read|stop|list|pty-attach|pty-list|pty-kill|pty-rename|ports|version|daemon>")
 		return 2
 	}
 	op := args[0]
@@ -27,6 +27,15 @@ func Main(args []string, build string) int {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 		<-sig
+		return 0
+	}
+	if op == "pty-attach" {
+		// Streams: the first stdin line is the daemon request
+		// ({"op":"pty-attach","pty_attach":{...}}), then frames.
+		if err := PtyAttach(context.Background(), os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "pty-attach:", err)
+			return 1
+		}
 		return 0
 	}
 	if op == "daemon" {
@@ -91,6 +100,22 @@ func Main(args []string, build string) int {
 		return reply(StopProcess(ctx, req))
 	case "list":
 		return reply(ListProcesses(ctx))
+	case "pty-list":
+		return reply(ListPty(ctx))
+	case "pty-kill":
+		var req PtyKillRequest
+		if err := decode(in, &req); err != nil {
+			return reply[any](nil, err)
+		}
+		return reply(KillPty(ctx, req))
+	case "pty-rename":
+		var req PtyRenameRequest
+		if err := decode(in, &req); err != nil {
+			return reply[any](nil, err)
+		}
+		return reply(RenamePty(ctx, req))
+	case "ports":
+		return reply(ListPorts())
 	}
 	return reply[any](nil, fmt.Errorf("unknown op %q", op))
 }

@@ -1,8 +1,10 @@
-// Package auth provides pluggable authentication for the devenv API.
+// Package auth authenticates console, API and MCP requests.
 //
-// The initial implementation is a single admin password with a signed
-// session cookie. The Authenticator interface allows replacing it with OIDC
-// or a forward-auth proxy later without touching the API handlers.
+// Login methods (local password, OIDC providers) produce a signed session
+// cookie that carries only the user name and expiry. Every request resolves
+// the user again through a Resolver, so role changes and disabled users take
+// effect immediately. Personal access tokens (Authorization: Bearer dvn_...)
+// authenticate API and MCP clients.
 package auth
 
 import (
@@ -19,54 +21,22 @@ import (
 	"time"
 )
 
-// User is an authenticated principal.
-type User struct {
-	Name  string `json:"name"`
-	Admin bool   `json:"admin"`
-}
-
 // ErrInvalidCredentials is returned when login fails.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
-// Authenticator verifies credentials.
-type Authenticator interface {
-	// Mode identifies the authenticator for the frontend ("password", "none").
-	Mode() string
-	// Login verifies a username/password pair.
-	Login(ctx context.Context, username, password string) (*User, error)
-}
-
-// PasswordAuthenticator accepts a single admin user.
-type PasswordAuthenticator struct {
-	Username string
-	Password string
-}
-
-func (a *PasswordAuthenticator) Mode() string { return "password" }
-
-func (a *PasswordAuthenticator) Login(_ context.Context, username, password string) (*User, error) {
-	uh := sha256.Sum256([]byte(username))
-	ue := sha256.Sum256([]byte(a.Username))
+// CheckPassword compares credentials in constant time. An empty expected
+// password never matches.
+func CheckPassword(wantUser, wantPassword, user, password string) bool {
+	uh := sha256.Sum256([]byte(user))
+	ue := sha256.Sum256([]byte(wantUser))
 	ph := sha256.Sum256([]byte(password))
-	pe := sha256.Sum256([]byte(a.Password))
+	pe := sha256.Sum256([]byte(wantPassword))
 	okU := subtle.ConstantTimeCompare(uh[:], ue[:])
 	okP := subtle.ConstantTimeCompare(ph[:], pe[:])
-	if okU&okP != 1 || a.Password == "" {
-		return nil, ErrInvalidCredentials
-	}
-	return &User{Name: a.Username, Admin: true}, nil
+	return okU&okP == 1 && wantPassword != ""
 }
 
-// NoneAuthenticator treats every request as the admin user. Development only.
-type NoneAuthenticator struct{ Username string }
-
-func (a *NoneAuthenticator) Mode() string { return "none" }
-
-func (a *NoneAuthenticator) Login(context.Context, string, string) (*User, error) {
-	return &User{Name: a.Username, Admin: true}, nil
-}
-
-// Sessions issues and verifies HMAC signed session cookies.
+// Sessions issues and verifies HMAC signed cookies.
 type Sessions struct {
 	Key        []byte
 	CookieName string
@@ -75,8 +45,8 @@ type Sessions struct {
 	now        func() time.Time
 }
 
-// NewSessions creates a session manager. A random key is generated when key is empty,
-// which invalidates sessions on restart.
+// NewSessions creates a session manager. A random key is generated when key
+// is empty, which invalidates sessions on restart.
 func NewSessions(key []byte, secure bool) (*Sessions, error) {
 	if len(key) == 0 {
 		key = make([]byte, 32)
@@ -87,62 +57,77 @@ func NewSessions(key []byte, secure bool) (*Sessions, error) {
 	return &Sessions{Key: key, CookieName: "devenv_session", TTL: 7 * 24 * time.Hour, Secure: secure, now: time.Now}, nil
 }
 
-type claims struct {
-	User
-	Exp int64 `json:"exp"`
+func (s *Sessions) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
-func (s *Sessions) sign(payload []byte) string {
+// Session is the content of a session cookie.
+type Session struct {
+	User     string `json:"u"`
+	Provider string `json:"p,omitempty"`
+	Exp      int64  `json:"exp"`
+}
+
+func (s *Sessions) sign(purpose string, payload []byte) string {
 	m := hmac.New(sha256.New, s.Key)
+	m.Write([]byte(purpose))
+	m.Write([]byte{0})
 	m.Write(payload)
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 
-// Encode returns a signed token for the user.
-func (s *Sessions) Encode(u *User) (string, error) {
-	b, err := json.Marshal(claims{User: *u, Exp: s.now().Add(s.TTL).Unix()})
+// Seal signs a JSON value for purpose ("session", "oidc-state", ...).
+func (s *Sessions) Seal(purpose string, v any) (string, error) {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
 	p := base64.RawURLEncoding.EncodeToString(b)
-	return p + "." + s.sign([]byte(p)), nil
+	return p + "." + s.sign(purpose, []byte(p)), nil
 }
 
-// Decode verifies a token.
-func (s *Sessions) Decode(token string) (*User, error) {
+// Open verifies a sealed value.
+func (s *Sessions) Open(purpose, token string, v any) error {
 	p, sig, ok := strings.Cut(token, ".")
-	if !ok || !hmac.Equal([]byte(sig), []byte(s.sign([]byte(p)))) {
-		return nil, errors.New("invalid session")
+	if !ok || !hmac.Equal([]byte(sig), []byte(s.sign(purpose, []byte(p)))) {
+		return errors.New("invalid signature")
 	}
 	b, err := base64.RawURLEncoding.DecodeString(p)
 	if err != nil {
+		return errors.New("invalid encoding")
+	}
+	return json.Unmarshal(b, v)
+}
+
+// Encode returns a signed session token.
+func (s *Sessions) Encode(user, provider string) (string, error) {
+	return s.Seal("session", Session{User: user, Provider: provider, Exp: s.clock().Add(s.TTL).Unix()})
+}
+
+// Decode verifies a session token.
+func (s *Sessions) Decode(token string) (*Session, error) {
+	var c Session
+	if err := s.Open("session", token, &c); err != nil || c.User == "" {
 		return nil, errors.New("invalid session")
 	}
-	var c claims
-	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, errors.New("invalid session")
-	}
-	if s.now().Unix() > c.Exp {
+	if s.clock().Unix() > c.Exp {
 		return nil, errors.New("session expired")
 	}
-	u := c.User
-	return &u, nil
+	return &c, nil
 }
 
 // SetCookie writes the session cookie.
-func (s *Sessions) SetCookie(w http.ResponseWriter, u *User) error {
-	tok, err := s.Encode(u)
+func (s *Sessions) SetCookie(w http.ResponseWriter, user, provider string) error {
+	tok, err := s.Encode(user, provider)
 	if err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     s.CookieName,
-		Value:    tok,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   s.Secure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(s.TTL.Seconds()),
+		Name: s.CookieName, Value: tok, Path: "/", HttpOnly: true,
+		Secure: s.Secure, SameSite: http.SameSiteLaxMode, MaxAge: int(s.TTL.Seconds()),
 	})
 	return nil
 }
@@ -155,8 +140,8 @@ func (s *Sessions) ClearCookie(w http.ResponseWriter) {
 	})
 }
 
-// FromRequest returns the user of a request's session cookie.
-func (s *Sessions) FromRequest(r *http.Request) (*User, error) {
+// FromRequest returns the session of a request.
+func (s *Sessions) FromRequest(r *http.Request) (*Session, error) {
 	c, err := r.Cookie(s.CookieName)
 	if err != nil {
 		return nil, err
@@ -164,51 +149,68 @@ func (s *Sessions) FromRequest(r *http.Request) (*User, error) {
 	return s.Decode(c.Value)
 }
 
-type ctxKey struct{}
-
-// WithUser stores the user in the context.
-func WithUser(ctx context.Context, u *User) context.Context {
-	return context.WithValue(ctx, ctxKey{}, u)
+// Resolver turns a session or token into a principal.
+type Resolver interface {
+	// Session resolves a session user. Errors reject the request.
+	Session(ctx context.Context, s *Session) (*Principal, error)
+	// Token resolves a bearer token for scope ("api" or "mcp").
+	Token(ctx context.Context, token, scope string) (*Principal, error)
 }
 
-// UserFrom returns the user stored in the context.
-func UserFrom(ctx context.Context) *User {
-	u, _ := ctx.Value(ctxKey{}).(*User)
-	return u
-}
-
-// CSRFHeader must be present on state changing requests. Browsers can not
-// send custom headers cross-origin without a CORS preflight, which we never
-// allow, so its presence proves a same-origin request.
+// CSRFHeader must be present on state changing cookie requests. Browsers can
+// not send custom headers cross-origin without a CORS preflight, which we
+// never allow, so its presence proves a same-origin request.
 const CSRFHeader = "X-Requested-With"
 
-// Middleware authenticates requests. With the "none" authenticator every
-// request is treated as the configured user.
-func Middleware(a Authenticator, s *Sessions, next http.Handler) http.Handler {
+// Middleware authenticates requests with a session cookie or a bearer token
+// (scope "api"). A non-nil Anonymous principal disables authentication.
+type Middleware struct {
+	Sessions  *Sessions
+	Resolver  Resolver
+	Anonymous *Principal
+}
+
+// Wrap returns the authenticating handler.
+func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var u *User
-		if na, ok := a.(*NoneAuthenticator); ok {
-			u = &User{Name: na.Username, Admin: true}
-		} else {
-			var err error
-			if u, err = s.FromRequest(r); err != nil {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
+		p, cookie, err := m.authenticate(r)
+		if err != nil {
+			WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if cookie {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+			default:
+				if r.Header.Get(CSRFHeader) == "" {
+					WriteError(w, http.StatusForbidden, "missing "+CSRFHeader+" header")
+					return
+				}
 			}
 		}
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			if r.Header.Get(CSRFHeader) == "" {
-				writeError(w, http.StatusForbidden, "missing "+CSRFHeader+" header")
-				return
-			}
-		}
-		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))
+		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
+func (m *Middleware) authenticate(r *http.Request) (*Principal, bool, error) {
+	if m.Anonymous != nil {
+		p := *m.Anonymous
+		return &p, false, nil
+	}
+	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		p, err := m.Resolver.Token(r.Context(), strings.TrimSpace(tok), "api")
+		return p, false, err
+	}
+	s, err := m.Sessions.FromRequest(r)
+	if err != nil {
+		return nil, true, err
+	}
+	p, err := m.Resolver.Session(r.Context(), s)
+	return p, true, err
+}
+
+// WriteError writes a JSON error.
+func WriteError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
