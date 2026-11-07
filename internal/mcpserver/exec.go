@@ -150,8 +150,7 @@ func (s *Server) registerExec(srv *mcp.Server) {
 			"Runs `bash -lc` as user dev (passwordless sudo) in /home/dev unless cwd is set. " +
 			"Each call is a fresh shell: use cwd/env or chain commands with && instead of relying on cd from earlier calls. " +
 			"Not interactive: pass input via stdin and use non-interactive flags (e.g. apt-get -y). " +
-			"Output is limited to 256KB per stream. Prefer read_file/edit_file/search for files, and start_process for anything that runs longer than about a minute " +
-			"(some MCP gateways cut tool calls after 60 seconds).",
+			"Output is limited to 256KB per stream. Prefer read_file/edit_file/search for files, and start_process for anything that runs longer than about a minute.",
 	}, logged("exec", s.exec))
 }
 

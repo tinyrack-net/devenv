@@ -57,7 +57,7 @@ func (s *Server) pool() *sshclient.Pool {
 
 const instructions = `devenv provides isolated Linux development environments (containers on Kubernetes) for coding work.
 Workflow:
-1. create_environment with a unique name. Prefer the "agent" image when it exists (Go, Node.js/pnpm, Python/uv, gh, ripgrep preinstalled). It waits until running (about 90 seconds at most); if the result says it is still starting, poll get_environment.
+1. create_environment with a unique name. Prefer the "agent" image when it exists (Go, Node.js/pnpm, Python/uv, gh, ripgrep preinstalled). It waits until running.
    Environments belong to the user of your access token; list_environments shows yours and those shared with you. A person may watch or join your work from the devenv console.
 2. Work inside it. The user is "dev" (home /home/dev, passwordless sudo). Relative paths are relative to /home/dev.
    - Files: read_file (line numbers + offset/limit), edit_file (exact text replacement, returns a diff), write_file (new files or full rewrites), list_dir.
