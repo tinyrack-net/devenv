@@ -152,7 +152,7 @@ func (s *Server) stopProcess(w http.ResponseWriter, r *http.Request) {
 
 // Port is a listening port with ways to reach it.
 type Port struct {
-	agent.ListeningPort
+	agent.ListeningPort `tstype:",extends"`
 	// URL on the environment's own address (loadBalancer, multus).
 	URL string `json:"url,omitempty"`
 	// PreviewURL through the devenv server (preview.domain).

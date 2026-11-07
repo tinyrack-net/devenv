@@ -1,27 +1,39 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router";
-import { api } from "../api";
-import { ErrorBox, Field } from "../components/common";
+import { Boxes, KeyRound, LogIn } from "lucide-react";
+import { api } from "../lib/api";
+import { useInfo } from "../lib/prefs";
+import { ErrorAlert, Field, Loading, Spinner } from "../components/ui";
 
 export function LoginPage() {
+  const info = useInfo();
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const navigate = useNavigate();
-  const location = useLocation();
-  const qc = useQueryClient();
+  const [error, setError] = useState<unknown>(params.get("error") ?? null);
+  const ret = params.get("return") || "/";
+  const [showPassword, setShowPassword] = useState(false);
 
-  const submit = async (e: FormEvent) => {
+  if (info.isLoading) return <Loading />;
+  if (info.data?.auth.disabled) {
+    navigate(ret, { replace: true });
+    return null;
+  }
+  const providers = info.data?.providers ?? [];
+  const passwordOpen = info.data?.auth.password && (providers.length === 0 || showPassword);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
       await api.login(username, password);
-      await qc.invalidateQueries();
-      const from = (location.state as { from?: string } | null)?.from ?? "/";
-      navigate(from, { replace: true });
+      qc.clear();
+      navigate(ret.startsWith("/") && !ret.startsWith("//") ? ret : "/", { replace: true });
     } catch (err) {
       setError(err);
     } finally {
@@ -30,26 +42,50 @@ export function LoginPage() {
   };
 
   return (
-    <div className="login">
-      <form className="card login-card" onSubmit={submit}>
-        <h1>devenv</h1>
-        <ErrorBox error={error} />
-        <Field label="Username">
-          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-        </Field>
-        <Field label="Password">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            autoFocus
-          />
-        </Field>
-        <button className="primary" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+    <div className="flex min-h-screen items-center justify-center bg-base-200 p-4">
+      <div className="card w-full max-w-sm bg-base-100 shadow-xl">
+        <div className="card-body gap-4">
+          <div className="flex flex-col items-center gap-2 pb-2">
+            <Boxes className="size-10 text-primary" />
+            <h1 className="text-xl font-semibold">Sign in to devenv</h1>
+          </div>
+          {error ? <ErrorAlert error={typeof error === "string" ? new Error(error) : error} /> : null}
+          {providers.map((p) => (
+            <a key={p.id} className="btn btn-primary w-full" href={`${p.loginURL}?return=${encodeURIComponent(ret)}`}>
+              <LogIn className="size-4" /> Continue with {p.name}
+            </a>
+          ))}
+          {info.data?.auth.password && providers.length > 0 && !showPassword && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowPassword(true)}>
+              <KeyRound className="size-4" /> Sign in with the local account
+            </button>
+          )}
+          {passwordOpen && (
+            <form onSubmit={submit} className="flex flex-col gap-1">
+              {providers.length > 0 && <div className="divider my-1 text-xs">local account</div>}
+              <Field label="Username">
+                <input className="input w-full" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+              </Field>
+              <Field label="Password">
+                <input
+                  className="input w-full"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  autoFocus
+                />
+              </Field>
+              <button className="btn btn-neutral mt-3 w-full" disabled={busy || !password}>
+                {busy && <Spinner className="loading-xs" />} Sign in
+              </button>
+            </form>
+          )}
+          {!info.data?.auth.password && providers.length === 0 && (
+            <p className="text-sm text-base-content/60">No login method is configured.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

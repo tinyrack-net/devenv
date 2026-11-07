@@ -1,49 +1,71 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, type Resources } from "../api";
-import { ErrorBox, Field } from "../components/common";
-import { ResourceInputs } from "../components/ResourceInputs";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Check, ChevronDown, Lock, Monitor, Network, SquareTerminal, User } from "lucide-react";
+import { api, type AccessInput, type PortInput, type ResourcesInput } from "../lib/api";
+import { useMe, usePrefs } from "../lib/prefs";
+import { PageHeader } from "../components/Layout";
+import { ResourceInputs, PortsInput, SharingInput } from "../components/EnvForm";
+import { ErrorAlert, Field, Loading, Spinner, cx } from "../components/ui";
+import { UsageSummary } from "./Environments";
 
-const NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const nameRe = /^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$/;
+
+function suggestName(image: string, taken: Set<string>): string {
+  const base = image.replace(/[^a-z0-9-]/g, "").slice(0, 30) || "env";
+  for (let i = 1; i < 100; i++) {
+    const n = `${base}-${i}`;
+    if (!taken.has(n)) return n;
+  }
+  return `${base}-${Date.now() % 10000}`;
+}
+
+const networkLabel: Record<string, string> = {
+  gateway: "SSH through the gateway",
+  loadBalancer: "Own address (LoadBalancer)",
+  multus: "Own LAN address",
+};
 
 export function NewEnvironmentPage() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const images = useQuery({ queryKey: ["images"], queryFn: api.images });
+  const me = useMe();
+  const [prefs] = usePrefs();
+  const images = useQuery({ queryKey: ["images"], queryFn: () => api.images() });
   const classes = useQuery({ queryKey: ["classes"], queryFn: api.classes });
-  const keys = useQuery({ queryKey: ["sshkeys"], queryFn: api.sshKeys });
+  const envs = useQuery({ queryKey: ["environments", {}], queryFn: () => api.environments() });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.users, enabled: !!me.data?.admin });
 
-  const [name, setName] = useState("");
   const [image, setImage] = useState("");
   const [cls, setCls] = useState("");
-  const [resources, setResources] = useState<Resources>({});
-  const [selectedKeys, setSelectedKeys] = useState<Set<string> | null>(null);
+  const [name, setName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [res, setRes] = useState<ResourcesInput>({});
+  const [ports, setPorts] = useState<PortInput[]>([]);
   const [password, setPassword] = useState("");
-  const [password2, setPassword2] = useState("");
+  const [keys, setKeys] = useState("");
+  const [sharing, setSharing] = useState<AccessInput>({ users: [], groups: [] });
+  const [owner, setOwner] = useState("");
+  const [advanced, setAdvanced] = useState(false);
 
-  const available = useMemo(() => images.data?.filter((i) => !i.disabled) ?? [], [images.data]);
-  const selectedImage = available.find((i) => i.name === image);
-  const selectedClass = classes.data?.find((c) => c.name === cls);
-
+  const usable = useMemo(() => (images.data ?? []).filter((i) => !i.disabled), [images.data]);
   useEffect(() => {
-    if (!image && available.length) setImage(available[0].name);
-  }, [available, image]);
+    if (!image && usable.length) {
+      const pref = usable.find((i) => i.name === prefs.defaultImage) ?? usable[0];
+      setImage(pref.name);
+    }
+  }, [usable, image, prefs.defaultImage]);
   useEffect(() => {
-    if (!cls && classes.data?.length) setCls(classes.data[0].name);
-  }, [classes.data, cls]);
+    if (!cls && classes.data?.length) {
+      setCls((classes.data.find((c) => c.name === prefs.defaultClass) ?? classes.data[0]).name);
+    }
+  }, [classes.data, cls, prefs.defaultClass]);
   useEffect(() => {
-    if (selectedKeys === null && keys.data) setSelectedKeys(new Set(keys.data.map((k) => k.id)));
-  }, [keys.data, selectedKeys]);
+    if (!nameTouched && image && envs.data) setName(suggestName(image, new Set(envs.data.map((e) => e.name))));
+  }, [image, envs.data, nameTouched]);
 
-  // Reset resources to the image defaults when the image changes.
-  useEffect(() => setResources({}), [image]);
-
-  const defaults: Resources = {
-    cpu: selectedImage?.defaultResources.cpu,
-    memory: selectedImage?.defaultResources.memory,
-    disk: selectedImage?.defaultResources.disk ?? selectedClass?.defaultDisk,
-  };
+  const img = usable.find((i) => i.name === image);
+  const klass = classes.data?.find((c) => c.name === cls);
+  useEffect(() => setRes({}), [image]);
 
   const create = useMutation({
     mutationFn: () =>
@@ -51,137 +73,164 @@ export function NewEnvironmentPage() {
         name,
         image,
         class: cls,
-        resources: {
-          cpu: resources.cpu ?? defaults.cpu,
-          memory: resources.memory ?? defaults.memory,
-          disk: selectedClass?.storageMode === "ephemeral" ? undefined : (resources.disk ?? defaults.disk),
-        },
-        sshAuthorizedKeys: keys.data?.filter((k) => selectedKeys?.has(k.id)).map((k) => k.publicKey) ?? [],
+        resources: res,
+        ports: klass?.networkMode === "loadBalancer" ? ports.filter((p) => p.port > 0) : undefined,
         password: password || undefined,
+        sshAuthorizedKeys: keys.trim() ? keys.split("\n").filter((l) => l.trim()) : undefined,
+        sharing: sharing.users.length || sharing.groups.length ? sharing : undefined,
+        owner: owner || undefined,
       }),
-    onSuccess: async (env) => {
-      await qc.invalidateQueries({ queryKey: ["environments"] });
-      navigate(`/environments/${env.name}`);
-    },
+    onSuccess: (env) => navigate(`/env/${env.name}`),
   });
 
-  const passwordError =
-    password && password.length < 8
-      ? "At least 8 characters"
-      : password && password !== password2
-        ? "Passwords do not match"
-        : null;
-  const nameError = name && (!NAME_RE.test(name) || name.length > 40) ? "Lowercase letters, digits and '-', max 40" : null;
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    create.mutate();
-  };
-
+  if (images.isLoading || classes.isLoading) return <Loading />;
+  const nameOK = nameRe.test(name);
+  const shared = usable.filter((i) => !i.owner);
+  const personal = usable.filter((i) => i.owner);
 
   return (
     <>
-      <div className="page-header">
-        <h1>New environment</h1>
-      </div>
-      <form className="card form" onSubmit={submit}>
-        <ErrorBox error={create.error ?? images.error ?? classes.error} />
-        <Field label="Name" hint={nameError ?? "Used as hostname and SSH user."}>
-          <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="my-project" autoFocus />
-        </Field>
+      <PageHeader title="New environment" subtitle="Pick an image, size it and go." />
+      <UsageSummary />
+      <form
+        className="space-y-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          create.mutate();
+        }}
+      >
+        <section className="rounded-box bg-base-100 p-5">
+          <h2 className="mb-3 font-semibold">Image</h2>
+          {[
+            { title: "Shared", list: shared },
+            { title: "My images", list: personal },
+          ]
+            .filter((g) => g.list.length)
+            .map((g) => (
+              <div key={g.title} className="mb-3">
+                {personal.length > 0 && <div className="mb-2 text-xs font-medium text-base-content/50 uppercase">{g.title}</div>}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {g.list.map((i) => (
+                    <button
+                      type="button"
+                      key={i.name}
+                      onClick={() => setImage(i.name)}
+                      className={cx(
+                        "relative flex flex-col items-start gap-1 rounded-box border-2 p-4 text-left transition-colors",
+                        image === i.name ? "border-primary bg-primary/5" : "border-base-300 hover:border-base-content/30",
+                      )}
+                    >
+                      {image === i.name && <Check className="absolute top-3 right-3 size-4 text-primary" />}
+                      <div className="flex items-center gap-2 font-medium">
+                        {i.desktop ? <Monitor className="size-4" /> : <SquareTerminal className="size-4" />}
+                        {i.displayName || i.name}
+                      </div>
+                      {i.description && <p className="text-sm text-base-content/60 line-clamp-2">{i.description}</p>}
+                      <code className="font-mono-tight mt-1 truncate text-base-content/40">{i.image}</code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          {usable.length === 0 && (
+            <p className="text-sm text-base-content/60">
+              No images available. <Link to="/images" className="link">Add one</Link>.
+            </p>
+          )}
+        </section>
 
-        <Field label="Image">
-          {available.length === 0 ? (
-            <div className="muted">
-              No images available. <Link to="/images">Add one</Link>.
-            </div>
-          ) : (
-            <div className="choices">
-              {available.map((i) => (
-                <button
-                  type="button"
-                  key={i.name}
-                  className={`choice ${image === i.name ? "selected" : ""}`}
-                  onClick={() => setImage(i.name)}
-                >
-                  <strong>{i.displayName || i.name}</strong>
-                  {i.desktop && <span className="tag">desktop</span>}
-                  <span className="small muted">{i.description || i.image}</span>
-                </button>
-              ))}
+        <section className="rounded-box bg-base-100 p-5">
+          <div className="grid gap-x-6 md:grid-cols-2">
+            <Field label="Name" hint="Lowercase letters, digits and '-', up to 40 characters. Used for SSH: ssh <name>@gateway.">
+              <input
+                className={cx("input w-full", name && !nameOK && "input-error")}
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameTouched(true);
+                }}
+                required
+              />
+            </Field>
+            <Field label="Class" hint={klass ? `${networkLabel[klass.networkMode] ?? klass.networkMode} · ${klass.storageMode} storage` : undefined}>
+              <select className="select w-full" value={cls} onChange={(e) => setCls(e.target.value)}>
+                {classes.data?.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name}
+                    {c.default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {klass && img && (
+            <div className="mt-4">
+              <ResourceInputs
+                className={cls}
+                value={res}
+                defaults={{ ...img.defaultResources, disk: img.defaultResources.disk ?? klass.defaultDisk }}
+                onChange={setRes}
+                persistent={klass.storageMode === "persistent"}
+              />
             </div>
           )}
-        </Field>
+        </section>
 
-        {(classes.data?.length ?? 0) > 1 && (
-          <Field label="Class" hint={selectedClass && `${selectedClass.storageMode} storage · ${selectedClass.networkMode} network`}>
-            <select value={cls} onChange={(e) => setCls(e.target.value)}>
-              {classes.data!.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        {classes.data?.length === 0 && <div className="alert">No DevEnvironmentClass exists. Ask an administrator to create one.</div>}
+        <section className="rounded-box bg-base-100">
+          <button type="button" className="flex w-full items-center gap-2 p-5 font-semibold" onClick={() => setAdvanced((a) => !a)}>
+            <ChevronDown className={cx("size-4 transition-transform", !advanced && "-rotate-90")} /> Advanced
+            <span className="text-sm font-normal text-base-content/50">sharing, password, extra keys{klass?.networkMode === "loadBalancer" ? ", ports" : ""}</span>
+          </button>
+          {advanced && (
+            <div className="space-y-5 px-5 pb-5">
+              <div>
+                <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
+                  <User className="size-4" /> Share with
+                </h3>
+                <SharingInput value={sharing} onChange={setSharing} />
+              </div>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <Field label={<span className="flex items-center gap-2"><Lock className="size-4" /> Password for user dev</span>} hint="Optional. Enables SSH password login (also needed for sudo prompts in some tools).">
+                  <input className="input w-full" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+                </Field>
+                <Field label="Extra SSH public keys" hint="Your keys and the keys of users you share with always work. Add deploy or CI keys here.">
+                  <textarea className="textarea font-mono-tight w-full" rows={2} value={keys} onChange={(e) => setKeys(e.target.value)} placeholder="ssh-ed25519 AAAA… ci@example" />
+                </Field>
+              </div>
+              {klass?.networkMode === "loadBalancer" && (
+                <div>
+                  <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Network className="size-4" /> Ports on the environment address
+                  </h3>
+                  <PortsInput value={ports} onChange={setPorts} />
+                </div>
+              )}
+              {me.data?.admin && (
+                <Field label="Owner" hint="Administrators can create environments for other users.">
+                  <select className="select w-full max-w-xs" value={owner} onChange={(e) => setOwner(e.target.value)}>
+                    <option value="">me ({me.data.name})</option>
+                    {users.data
+                      ?.filter((u) => u.name !== me.data?.name)
+                      .map((u) => (
+                        <option key={u.name} value={u.name}>
+                          {u.name}
+                          {u.displayName ? ` (${u.displayName})` : ""}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+          )}
+        </section>
 
-        {cls && (
-          <ResourceInputs
-            className={cls}
-            value={resources}
-            defaults={defaults}
-            onChange={setResources}
-            persistent={selectedClass?.storageMode !== "ephemeral"}
-          />
-        )}
-
-        <Field label="SSH keys" hint={<Link to="/ssh-keys">Manage keys</Link>}>
-          {keys.data?.length === 0 && <span className="muted">No keys stored. You can still use the web terminal.</span>}
-          {keys.data?.map((k) => (
-            <label key={k.id} className="checkbox">
-              <input
-                type="checkbox"
-                checked={selectedKeys?.has(k.id) ?? false}
-                onChange={(e) => {
-                  const next = new Set(selectedKeys);
-                  if (e.target.checked) next.add(k.id);
-                  else next.delete(k.id);
-                  setSelectedKeys(next);
-                }}
-              />
-              {k.name} <span className="muted small mono">{k.fingerprint}</span>
-            </label>
-          ))}
-        </Field>
-
-        <Field
-          label="Password (optional)"
-          hint={passwordError ?? "Password for the dev user. Enables SSH password login; SSH keys keep working."}
-        >
-          <div className="row">
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder="Confirm"
-              value={password2}
-              onChange={(e) => setPassword2(e.target.value)}
-            />
-          </div>
-        </Field>
-
-        <div className="form-actions">
-          <Link to="/" className="button">
+        <ErrorAlert error={create.error} />
+        <div className="flex justify-end gap-2">
+          <Link to="/" className="btn btn-ghost">
             Cancel
           </Link>
-          <button className="primary" disabled={!name || !!nameError || !!passwordError || !image || !cls || create.isPending}>
-            {create.isPending ? "Creating…" : "Create"}
+          <button className="btn btn-primary" disabled={!nameOK || !image || create.isPending}>
+            {create.isPending && <Spinner className="loading-xs" />} Create and open
           </button>
         </div>
       </form>

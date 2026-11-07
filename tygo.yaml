@@ -1,0 +1,34 @@
+# Generates web/src/gen/*.ts from Go API types: `make types`.
+packages:
+  - path: github.com/tinyrack-net/devenv/internal/api
+    output_path: web/src/gen/api.ts
+    include_files: [types.go, images.go, workspace.go]
+    type_mappings:
+      time.Time: "string"
+      json.RawMessage: "unknown"
+      capacity.NodeCapacity: "NodeCapacity"
+      access.Level: "string"
+      tokens.Token: "Token"
+      agent.ListeningPort: "ListeningPort"
+    frontmatter: |
+      import type { NodeCapacity } from "./capacity";
+      import type { Token } from "./tokens";
+      import type { Entry } from "./activity";
+      import type { ListeningPort, PtySession, Process, Output, StatsResult } from "./agent";
+      export type { Token, Entry, ListeningPort, PtySession, Process, Output, StatsResult, NodeCapacity };
+  - path: github.com/tinyrack-net/devenv/internal/capacity
+    output_path: web/src/gen/capacity.ts
+    include_files: [capacity.go]
+  - path: github.com/tinyrack-net/devenv/internal/tokens
+    output_path: web/src/gen/tokens.ts
+    type_mappings:
+      time.Time: "string"
+  - path: github.com/tinyrack-net/devenv/internal/activity
+    output_path: web/src/gen/activity.ts
+    type_mappings:
+      time.Time: "string"
+  - path: github.com/tinyrack-net/devenv/internal/agent
+    output_path: web/src/gen/agent.ts
+    include_files: [protocol.go, pty.go, ports.go]
+    type_mappings:
+      time.Time: "string"

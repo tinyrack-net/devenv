@@ -62,3 +62,10 @@ chart-crds: manifests ## Copy generated CRDs into the Helm chart
 chart-lint: chart-crds
 	helm lint charts/devenv
 	helm template devenv charts/devenv --namespace devenv-system >/dev/null
+
+.PHONY: types
+types: ## Generate TypeScript API types (web/src/gen) from Go
+	GOBIN=$(LOCALBIN) go install github.com/gzuidhof/tygo@v0.2.21
+	$(LOCALBIN)/tygo generate
+	# tygo keeps the Go package qualifier on embedded types.
+	sed -i 's/extends agent\./extends /' web/src/gen/api.ts

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/tokens"
 )
 
 // AccessInput lists users and groups.
@@ -297,19 +298,19 @@ type CreateTokenRequest struct {
 
 // CreatedToken includes the plain token, shown once.
 type CreatedToken struct {
-	Token any    `json:"token"`
-	Value string `json:"value"`
+	Token *tokens.Token `json:"token"`
+	Value string        `json:"value"`
 }
 
 // System is the admin system overview.
 type System struct {
-	Version   string         `json:"version"`
-	Namespace string         `json:"namespace"`
-	Config    any            `json:"config"`
-	SSH       SSHInfo        `json:"ssh"`
-	Helper    string         `json:"helperImage,omitempty"`
-	Nodes     []capacityNode `json:"nodes"`
-	Counts    map[string]int `json:"counts"`
+	Version   string                  `json:"version"`
+	Namespace string                  `json:"namespace"`
+	Config    any                     `json:"config"`
+	SSH       SSHInfo                 `json:"ssh"`
+	Helper    string                  `json:"helperImage,omitempty"`
+	Nodes     []capacity.NodeCapacity `json:"nodes"`
+	Counts    map[string]int          `json:"counts"`
 }
 
 type capacityNode = capacity.NodeCapacity

@@ -1,10 +1,10 @@
-// Minimal Kubernetes quantity helpers for the resource sliders.
+// Minimal Kubernetes quantity helpers.
 
 const binary: Record<string, number> = { Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40, Pi: 2 ** 50 };
 const decimal: Record<string, number> = { n: 1e-9, u: 1e-6, m: 1e-3, "": 1, k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15 };
 
 /** Parses a quantity into a base-unit number (cores or bytes). */
-export function parseQuantity(q: string | undefined): number | undefined {
+export function parseQuantity(q: string | undefined | null): number | undefined {
   if (!q) return undefined;
   const m = /^([0-9.]+)([a-zA-Z]*)$/.exec(q.trim());
   if (!m) return undefined;
@@ -36,11 +36,11 @@ export function mib(q: string | undefined): number | undefined {
 export function formatCPU(q: string | undefined): string {
   const v = parseQuantity(q);
   if (v === undefined) return "-";
-  return `${Number(v.toFixed(2))} core${v === 1 ? "" : "s"}`;
+  return `${Number(v.toFixed(2))} CPU`;
 }
 
-export function formatBytes(q: string | undefined): string {
-  const v = parseQuantity(q);
+export function formatBytes(q: string | number | undefined): string {
+  const v = typeof q === "number" ? q : parseQuantity(q);
   if (v === undefined) return "-";
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
@@ -50,4 +50,12 @@ export function formatBytes(q: string | undefined): string {
     i++;
   }
   return `${Number(n.toFixed(1))} ${units[i]}`;
+}
+
+/** Fraction used/limit in [0,1], or undefined without a limit. */
+export function ratio(used: string | undefined, limit: string | undefined): number | undefined {
+  const u = parseQuantity(used) ?? 0;
+  const l = parseQuantity(limit);
+  if (!l) return undefined;
+  return Math.min(1, u / l);
 }
