@@ -69,3 +69,25 @@ func (c *DevEnvironmentClassSpec) CheckLimits(r EffectiveResources) error {
 	}
 	return nil
 }
+
+// StorageCompatible reports whether an environment can move from class a to
+// class b without moving its home volume: same storage mode and, for
+// persistent storage, the same storage class.
+func StorageCompatible(a, b *DevEnvironmentClassSpec) error {
+	if a.EffectiveStorageMode() != b.EffectiveStorageMode() {
+		return fmt.Errorf("storage mode differs (%s vs %s)", a.EffectiveStorageMode(), b.EffectiveStorageMode())
+	}
+	if a.EffectiveStorageMode() != StorageModePersistent {
+		return nil
+	}
+	name := func(p *string) string {
+		if p == nil {
+			return "(cluster default)"
+		}
+		return *p
+	}
+	if name(a.Storage.StorageClassName) != name(b.Storage.StorageClassName) {
+		return fmt.Errorf("storage class differs (%s vs %s)", name(a.Storage.StorageClassName), name(b.Storage.StorageClassName))
+	}
+	return nil
+}

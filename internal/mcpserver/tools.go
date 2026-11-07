@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/apimachinery/pkg/api/resource"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/ptr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -137,6 +138,8 @@ type createIn struct {
 type updateIn struct {
 	Name   string           `json:"name" jsonschema:"environment name"`
 	Image  string           `json:"image,omitempty" jsonschema:"new image (restarts the environment)"`
+	Class  string           `json:"class,omitempty" jsonschema:"move to another class from list_classes, e.g. one with a dedicated network address (restarts the environment; only between classes with the same storage)"`
+	Wait   *bool            `json:"wait,omitempty" jsonschema:"wait until a restart caused by the change is done (default true, up to 3 minutes)"`
 	CPU    string           `json:"cpu,omitempty" jsonschema:"new CPU (restarts the environment)"`
 	Memory string           `json:"memory,omitempty" jsonschema:"new memory (restarts the environment)"`
 	Disk   string           `json:"disk,omitempty" jsonschema:"new home volume size; can only grow"`
@@ -262,11 +265,14 @@ func (s *Server) register(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "update_environment",
-		Description: "Change resources, image or ports of an environment. Changing image or CPU/memory restarts it; files in /home/dev are kept.",
+		Description: "Change resources, image, class (network) or ports of an environment. Changing image, class or CPU/memory restarts it; files in /home/dev are kept.",
 	}, logged("update_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, envOut, error) {
 		req := api.UpdateEnvironmentRequest{Ports: in.Ports}
 		if in.Image != "" {
 			req.Image = &in.Image
+		}
+		if in.Class != "" {
+			req.Class = &in.Class
 		}
 		if in.CPU != "" || in.Memory != "" || in.Disk != "" {
 			cur, err := s.getEnv(ctx, in.Name)
@@ -286,12 +292,29 @@ func (s *Server) register(srv *mcp.Server) {
 			req.Resources = &r
 		}
 		note := ""
+		before, err := s.getEnv(ctx, in.Name)
+		if err != nil {
+			return nil, envOut{}, userErr(err)
+		}
 		env, err := s.API.UpdateEnvironment(ctx, who(ctx), in.Name, req)
 		if err != nil {
 			return nil, envOut{}, userErr(err)
 		}
-		if req.Image != nil || req.Resources != nil {
-			note = "the environment restarts to apply the change; files in /home/dev are kept"
+		restarts := env.Spec.ImageRef != before.Spec.ImageRef || env.ClassName() != before.ClassName() ||
+			!quantityEqual(env.Spec.Resources.CPU, before.Spec.Resources.CPU) || !quantityEqual(env.Spec.Resources.Memory, before.Spec.Resources.Memory)
+		if restarts && env.IsRunning() {
+			note = "the environment restarted to apply the change; files in /home/dev are kept"
+			s.pool().Forget(in.Name)
+			if boolDefault(in.Wait, true) {
+				s.waitCacheGeneration(ctx, in.Name, env.Generation)
+				var wnote string
+				if env, wnote, err = s.waitSoft(ctx, in.Name, true); err != nil {
+					return nil, envOut{}, err
+				}
+				if wnote != "" {
+					note = wnote
+				}
+			}
 		}
 		return nil, envOut{Environment: s.view(env), Note: note}, nil
 	}))
@@ -350,6 +373,28 @@ func (s *Server) getEnv(ctx context.Context, name string) (*devenvv1.DevEnvironm
 		env, err := s.API.GetEnvironment(ctx, who(ctx), name)
 		if err == nil || !apierrors.IsNotFound(err) || time.Since(start) > 3*time.Second || ctx.Err() != nil {
 			return env, err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func quantityEqual(a, b *resource.Quantity) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Cmp(*b) == 0
+}
+
+// waitCacheGeneration waits (briefly) until reads see at least generation,
+// so a following wait does not act on the state from before an update.
+func (s *Server) waitCacheGeneration(ctx context.Context, name string, gen int64) {
+	if gen == 0 {
+		return
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		if e, err := s.API.GetEnvironment(ctx, who(ctx), name); err == nil && e.Generation >= gen && e.Status.ObservedGeneration >= gen {
+			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

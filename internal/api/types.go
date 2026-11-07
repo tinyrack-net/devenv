@@ -115,7 +115,10 @@ type PortInput struct {
 
 // UpdateEnvironmentRequest patches an environment. Nil fields are unchanged.
 type UpdateEnvironmentRequest struct {
-	Image     *string         `json:"image,omitempty"`
+	Image *string `json:"image,omitempty"`
+	// Class moves the environment to another class with the same storage.
+	// The pod is recreated; /home/dev is kept.
+	Class     *string         `json:"class,omitempty"`
 	Resources *ResourcesInput `json:"resources,omitempty"`
 	SSHKeys   *[]string       `json:"sshAuthorizedKeys,omitempty"`
 	Running   *bool           `json:"running,omitempty"`

@@ -321,7 +321,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 // use access; everything else needs manage access.
 func (s *Server) UpdateEnvironment(ctx context.Context, p *auth.Principal, name string, in UpdateEnvironmentRequest) (*devenvv1.DevEnvironment, error) {
 	need := access.Manage
-	if in.Image == nil && in.Resources == nil && in.SSHKeys == nil && in.Ports == nil && in.Password == nil && in.Sharing == nil && in.Owner == nil {
+	if in.Image == nil && in.Class == nil && in.Resources == nil && in.SSHKeys == nil && in.Ports == nil && in.Password == nil && in.Sharing == nil && in.Owner == nil {
 		need = access.Use
 	}
 	env, _, err := s.Authorize(ctx, p, name, need)
@@ -331,6 +331,14 @@ func (s *Server) UpdateEnvironment(ctx context.Context, p *auth.Principal, name 
 	before := env.DeepCopy()
 	if in.Image != nil {
 		env.Spec.ImageRef = *in.Image
+	}
+	classChanged := false
+	if in.Class != nil && *in.Class != "" && *in.Class != env.ClassName() {
+		if err := s.checkClassChange(ctx, p, env, *in.Class); err != nil {
+			return nil, err
+		}
+		env.Spec.ClassName = *in.Class
+		classChanged = true
 	}
 	if in.Resources != nil {
 		res, err := fromResourcesInput(*in.Resources)
@@ -398,7 +406,7 @@ func (s *Server) UpdateEnvironment(ctx context.Context, p *auth.Principal, name 
 	}
 
 	imageChanged := env.Spec.ImageRef != before.Spec.ImageRef
-	needsCapacity := imageChanged || in.Resources != nil || (env.IsRunning() && !before.IsRunning())
+	needsCapacity := imageChanged || classChanged || in.Resources != nil || (env.IsRunning() && !before.IsRunning())
 	if err := s.admit(ctx, p, env, imageChanged, needsCapacity); err != nil {
 		return nil, err
 	}
@@ -717,4 +725,31 @@ func (s *Server) myUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// checkClassChange validates moving an environment to another class: the
+// caller may use the target class and the home volume stays where it is.
+func (s *Server) checkClassChange(ctx context.Context, p *auth.Principal, env *devenvv1.DevEnvironment, to string) error {
+	target := &devenvv1.DevEnvironmentClass{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: to}, target); err != nil {
+		if apierrors.IsNotFound(err) {
+			return badRequest(fmt.Sprintf("class %q not found", to))
+		}
+		return err
+	}
+	if !access.CanUseClass(p, target) {
+		return badRequest(fmt.Sprintf("class %q not found", to))
+	}
+	current := &devenvv1.DevEnvironmentClass{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: env.ClassName()}, current); err != nil {
+		if apierrors.IsNotFound(err) {
+			// The old class is gone; nothing to compare with.
+			return nil
+		}
+		return err
+	}
+	if err := devenvv1.StorageCompatible(&current.Spec, &target.Spec); err != nil {
+		return badRequest(fmt.Sprintf("can not move to class %q: %v; the home volume can not move between storage types", to, err))
+	}
+	return nil
 }

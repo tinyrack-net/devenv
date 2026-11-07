@@ -58,8 +58,10 @@ spec:
             description: DevEnvironmentSpec defines the desired state of DevEnvironment.
             properties:
               className:
-                description: ClassName is the name of a DevEnvironmentClass. Defaults
-                  to "default".
+                description: |-
+                  ClassName is the name of a DevEnvironmentClass. Defaults to "default".
+                  It can change between classes with the same storage (mode and storage
+                  class); the pod is recreated, network and limits follow the new class.
                 type: string
               imageRef:
                 description: ImageRef is the name of a DevImage.
@@ -175,10 +177,6 @@ spec:
             required:
             - imageRef
             type: object
-            x-kubernetes-validations:
-            - message: className is immutable
-              rule: has(self.className) == has(oldSelf.className) && (!has(self.className)
-                || self.className == oldSelf.className)
           status:
             description: DevEnvironmentStatus defines the observed state of DevEnvironment.
             properties:

@@ -57,6 +57,7 @@ function Settings({ env }: { env: Environment }) {
 
   const [res, setRes] = useState<ResourcesInput>(env.resources);
   const [image, setImage] = useState(env.image);
+  const [cls, setCls] = useState(env.class);
   const [ports, setPorts] = useState<PortInput[]>(env.ports);
   const [sharing, setSharing] = useState<AccessInput>(env.sharing);
   const [keys, setKeys] = useState(env.sshAuthorizedKeys.join("\n"));
@@ -66,6 +67,7 @@ function Settings({ env }: { env: Environment }) {
   useEffect(() => {
     setRes(env.resources);
     setImage(env.image);
+    setCls(env.class);
     setPorts(env.ports);
     setSharing(env.sharing);
     setKeys(env.sshAuthorizedKeys.join("\n"));
@@ -73,6 +75,12 @@ function Settings({ env }: { env: Environment }) {
   }, [env.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const spec = useUpdate(env);
+  const move = useUpdate(env);
+  const sameStorage = (name: string) => {
+    const c = classes.data?.find((x) => x.name === name);
+    return !!c && !!klass && c.storageMode === klass.storageMode && (c.storageClass ?? "") === (klass.storageClass ?? "");
+  };
+  const networkLabel: Record<string, string> = { gateway: "SSH through the gateway", loadBalancer: "own address (LoadBalancer)", multus: "own LAN address" };
   const share = useUpdate(env);
   const net = useUpdate(env);
   const access = useUpdate(env);
@@ -117,6 +125,28 @@ function Settings({ env }: { env: Environment }) {
                 onClick={() => spec.mutate({ image: image !== env.image ? image : undefined, resources: res })}
               >
                 {spec.isPending && <Spinner className="loading-xs" />} Save and apply
+              </button>
+            )}
+          </fieldset>
+        </Section>
+
+        <Section title="Class and network" description="Move to another class, for example one with a dedicated network address. The environment restarts; /home/dev is kept. Only classes with the same storage are possible.">
+          <fieldset disabled={!manage} className="space-y-3">
+            <Field label="Class" hint={classes.data?.find((c) => c.name === cls) ? `${networkLabel[classes.data.find((c) => c.name === cls)!.networkMode] ?? ""}` : undefined}>
+              <select className="select w-full max-w-md" value={cls} onChange={(e) => setCls(e.target.value)}>
+                {classes.data?.map((c) => (
+                  <option key={c.name} value={c.name} disabled={c.name !== env.class && !sameStorage(c.name)}>
+                    {c.name} · {c.networkMode}
+                    {c.name !== env.class && !sameStorage(c.name) ? " (different storage)" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {cls !== env.class && <div className="text-sm text-warning">The address changes{env.ip ? ` (now ${env.ip})` : ""}; SSH host keys stay the same.</div>}
+            <ErrorAlert error={move.error} />
+            {manage && (
+              <button className="btn btn-primary btn-sm" disabled={cls === env.class || move.isPending} onClick={() => move.mutate({ class: cls })}>
+                {move.isPending && <Spinner className="loading-xs" />} Move and restart
               </button>
             )}
           </fieldset>
@@ -201,8 +231,6 @@ function Settings({ env }: { env: Environment }) {
 
         <Section title="Details">
           <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
-            <dt className="text-base-content/60">Class</dt>
-            <dd>{env.class}</dd>
             <dt className="text-base-content/60">Network</dt>
             <dd>{env.networkMode ?? "-"}</dd>
             <dt className="text-base-content/60">Address</dt>

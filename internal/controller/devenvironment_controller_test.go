@@ -428,14 +428,6 @@ func TestCELValidation(t *testing.T) {
 			t.Errorf("expected shrink rejection, got %v", err)
 		}
 	})
-	t.Run("class immutable", func(t *testing.T) {
-		cur := &devenvv1.DevEnvironment{}
-		must(t, get(cur, f.ns, "dev1"))
-		cur.Spec.ClassName = "other"
-		if err := k8sClient.Update(testCtx, cur); err == nil || !strings.Contains(err.Error(), "className is immutable") {
-			t.Errorf("expected immutability error, got %v", err)
-		}
-	})
 	t.Run("multus requires config", func(t *testing.T) {
 		err := k8sClient.Create(testCtx, &devenvv1.DevEnvironmentClass{
 			ObjectMeta: metav1.ObjectMeta{Name: f.class + "-multus"},
@@ -644,4 +636,65 @@ func TestUserKeys(t *testing.T) {
 	friend.Spec.Disabled = true
 	must(t, k8sClient.Update(testCtx, friend))
 	keysContain("FRND", false)
+}
+
+func TestChangeClass(t *testing.T) {
+	sc := "standard"
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{StorageClassName: &sc}}, false)
+	lbClass := f.class + "-lb"
+	must(t, k8sClient.Create(testCtx, &devenvv1.DevEnvironmentClass{
+		ObjectMeta: metav1.ObjectMeta{Name: lbClass},
+		Spec: devenvv1.DevEnvironmentClassSpec{
+			Storage: devenvv1.StorageSpec{StorageClassName: &sc},
+			Network: devenvv1.NetworkSpec{Mode: devenvv1.NetworkModeLoadBalancer},
+		},
+	}))
+	other := "other"
+	badClass := f.class + "-other-storage"
+	must(t, k8sClient.Create(testCtx, &devenvv1.DevEnvironmentClass{
+		ObjectMeta: metav1.ObjectMeta{Name: badClass},
+		Spec:       devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{StorageClassName: &other}},
+	}))
+
+	env := f.env("mv")
+	must(t, k8sClient.Create(testCtx, env))
+	pod := &corev1.Pod{}
+	eventually(t, func() error { return get(pod, f.ns, "mv") })
+	pvc := &corev1.PersistentVolumeClaim{}
+	must(t, get(pvc, f.ns, "mv-home"))
+	oldPod, oldPVC := pod.UID, pvc.UID
+
+	// The CRD no longer forbids changing the class. Gateway and
+	// loadBalancer pods are identical, so the pod keeps running and only the
+	// LoadBalancer Service is added.
+	updateEnv(t, env, func() { env.Spec.ClassName = lbClass })
+	eventually(t, func() error { return get(&corev1.Service{}, f.ns, "mv-lb") })
+	must(t, get(pod, f.ns, "mv"))
+	if pod.UID != oldPod || !pod.DeletionTimestamp.IsZero() {
+		t.Fatal("pod restarted although its spec did not change")
+	}
+	must(t, get(pvc, f.ns, "mv-home"))
+	if pvc.UID != oldPVC {
+		t.Fatal("home volume was replaced")
+	}
+
+	// Back to gateway: the LoadBalancer Service goes away.
+	updateEnv(t, env, func() { env.Spec.ClassName = f.class })
+	eventually(t, func() error {
+		if err := get(&corev1.Service{}, f.ns, "mv-lb"); !apierrors.IsNotFound(err) {
+			return fmt.Errorf("lb service still present: %v", err)
+		}
+		return nil
+	})
+
+	// A class with another storage class fails clearly and keeps the volume.
+	updateEnv(t, env, func() { env.Spec.ClassName = badClass })
+	cur := waitPhase(t, env, devenvv1.PhaseFailed)
+	if !strings.Contains(cur.Status.Message, "storage class") {
+		t.Fatalf("message %q", cur.Status.Message)
+	}
+	must(t, get(pvc, f.ns, "mv-home"))
+	if pvc.UID != oldPVC {
+		t.Fatal("home volume was replaced")
+	}
 }

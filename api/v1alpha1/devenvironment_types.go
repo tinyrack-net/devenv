@@ -8,7 +8,6 @@ import (
 const DefaultClassName = "default"
 
 // DevEnvironmentSpec defines the desired state of DevEnvironment.
-// +kubebuilder:validation:XValidation:rule="has(self.className) == has(oldSelf.className) && (!has(self.className) || self.className == oldSelf.className)",message="className is immutable"
 type DevEnvironmentSpec struct {
 	// Owner is the DevUser owning this environment.
 	// +optional
@@ -24,6 +23,8 @@ type DevEnvironmentSpec struct {
 	ImageRef string `json:"imageRef"`
 
 	// ClassName is the name of a DevEnvironmentClass. Defaults to "default".
+	// It can change between classes with the same storage (mode and storage
+	// class); the pod is recreated, network and limits follow the new class.
 	// +optional
 	ClassName string `json:"className,omitempty"`
 

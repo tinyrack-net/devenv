@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -99,6 +100,10 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 		setPhase(env, devenvv1.PhaseFailed, "InvalidSpec", err.Error())
 		return ctrl.Result{}, nil
 	}
+	if env.Status.NetworkMode != "" && env.Status.NetworkMode != rs.networkMode() {
+		// Moved to a class with another network: the old address is gone.
+		env.Status.IP, env.Status.MAC = "", ""
+	}
 	env.Status.NetworkMode = rs.networkMode()
 
 	if err := r.ensureSecret(ctx, rs); err != nil {
@@ -106,6 +111,11 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 	}
 	if rs.storageMode() == devenvv1.StorageModePersistent {
 		if err := r.ensurePVC(ctx, rs); err != nil {
+			var cm *classMismatchError
+			if errors.As(err, &cm) {
+				setPhase(env, devenvv1.PhaseFailed, "StorageMismatch", cm.msg)
+				return ctrl.Result{}, nil
+			}
 			return ctrl.Result{}, fmt.Errorf("ensure pvc: %w", err)
 		}
 	}
@@ -220,6 +230,12 @@ func (r *DevEnvironmentReconciler) ensurePVC(ctx context.Context, rs *resolved) 
 	}
 	if err != nil {
 		return err
+	}
+	// The class may have changed; the home volume can not move to another
+	// storage class.
+	haveSC, wantSC := obj.Spec.StorageClassName, desired.Spec.StorageClassName
+	if wantSC != nil && (haveSC == nil || *haveSC != *wantSC) {
+		return &classMismatchError{fmt.Sprintf("home volume uses storage class %s but class %q wants %s; move back to a class with the same storage", strOr(haveSC, "(cluster default)"), rs.class.Name, *wantSC)}
 	}
 	// Only growth is supported (enforced by CRD validation and Kubernetes).
 	want := desired.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -540,4 +556,15 @@ func (r *DevEnvironmentReconciler) mapBy(field string) handler.MapFunc {
 		}
 		return reqs
 	}
+}
+
+type classMismatchError struct{ msg string }
+
+func (e *classMismatchError) Error() string { return e.msg }
+
+func strOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
 }

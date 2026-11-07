@@ -651,3 +651,43 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("keys %+v", keys)
 	}
 }
+
+func TestChangeClass(t *testing.T) {
+	sc := "longhorn"
+	other := "fast"
+	lan := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "lan"}, Spec: devenvv1.DevEnvironmentClassSpec{
+		Network: devenvv1.NetworkSpec{Mode: devenvv1.NetworkModeLoadBalancer}, Access: devenvv1.Access{Groups: []string{"lan-users"}}}}
+	def := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Spec: devenvv1.DevEnvironmentClassSpec{
+		Storage: devenvv1.StorageSpec{StorageClassName: &sc}, Limits: devenvv1.Limits{MaxCPU: qp("6")}}}
+	lan.Spec.Storage.StorageClassName = &sc
+	fast := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "fast"}, Spec: devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{StorageClassName: &other}}}
+	eph := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "eph"}, Spec: devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{Mode: devenvv1.StorageModeEphemeral}}}
+	h := newHarness(t, lan, fast, eph)
+	// The harness default class has no storage class; replace it.
+	cur := &devenvv1.DevEnvironmentClass{}
+	_ = h.c.Get(t.Context(), client.ObjectKey{Name: "default"}, cur)
+	cur.Spec = def.Spec
+	_ = h.c.Update(t.Context(), cur)
+
+	alice := h.as("alice", devenvv1.RoleUser)
+	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "w", Image: "base", Running: new(bool)}, 201, nil)
+	for _, tc := range []struct {
+		class, msg string
+		code       int
+	}{{"nope", "not found", 400}, {"lan", "not found", 400}, {"fast", "storage class differs", 400}, {"eph", "storage mode differs", 400}} {
+		rec := alice.raw("PATCH", "/api/v1/environments/w", `{"class":"`+tc.class+`"}`, true)
+		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.msg) {
+			t.Errorf("%s: %d %s", tc.class, rec.Code, rec.Body)
+		}
+	}
+	// With access to lan the move works.
+	alice = h.as("alice", devenvv1.RoleUser, "lan-users")
+	var env Environment
+	alice.do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Class: new("lan")}, 200, &env)
+	if env.Class != "lan" {
+		t.Fatalf("class = %s", env.Class)
+	}
+	// Shared users can not move it.
+	alice.do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Sharing: &AccessInput{Users: []string{"bob"}}}, 200, nil)
+	h.as("bob", devenvv1.RoleUser, "lan-users").do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Class: new("default")}, 403, nil)
+}

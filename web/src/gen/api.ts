@@ -164,6 +164,11 @@ export interface PortInput {
  */
 export interface UpdateEnvironmentRequest {
   image?: string;
+  /**
+   * Class moves the environment to another class with the same storage.
+   * The pod is recreated; /home/dev is kept.
+   */
+  class?: string;
   resources?: ResourcesInput;
   sshAuthorizedKeys?: string[];
   running?: boolean;

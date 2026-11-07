@@ -115,3 +115,19 @@ Notes:
   in the official images.
 - Reserve the IP of important environments on the DHCP server using the MAC
   shown in the console.
+
+## Changing the class of an environment
+
+An environment can move to another class later (console: environment settings → Class and
+network; MCP: `update_environment` with `class`; API: `PATCH` with `"class"`). Typical use:
+start on the gateway class and move to a class with a dedicated LAN address when you need
+other machines to reach the environment directly.
+
+- Only between classes with the same storage (mode and storage class): the home volume
+  stays where it is and `/home/dev` is kept. Other moves are rejected.
+- The pod is recreated when its network changes (gateway ↔ multus); the address changes.
+  Moving between gateway and loadBalancer only adds or removes the LoadBalancer Service.
+- The new class's access rules and limits apply. Only the owner and administrators can
+  move an environment.
+- SSH host keys stay the same, so clients do not see a host key change; only the address
+  in `~/.ssh/config` needs updating for direct connections.
