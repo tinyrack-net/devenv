@@ -105,3 +105,17 @@ func TestDaemonProcesses(t *testing.T) {
 		t.Errorf("bad id: %q", errMsg)
 	}
 }
+
+func TestDaemonUnbufferedPython(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	bin := buildAgent(t)
+	tmp := t.TempDir()
+	t.Cleanup(func() { exec.Command("pkill", "-f", bin+" daemon").Run() })
+	out, errMsg := run[Output](t, bin, tmp, "start", StartRequest{ID: "py", Command: "python3 -c 'import time; print(\"ready\"); time.sleep(30)'", WaitMs: 5000, WaitFor: "ready", Limit: 1000})
+	if errMsg != "" || !strings.Contains(out.Output, "ready") {
+		t.Fatalf("python output buffered: %q %+v", errMsg, out)
+	}
+	run[Output](t, bin, tmp, "stop", StopRequest{ID: "py"})
+}

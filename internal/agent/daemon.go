@@ -240,6 +240,14 @@ func (d *daemon) start(req StartRequest) (Output, error) {
 		d.mu.Unlock()
 		return Output{}, err
 	}
+	// Output goes to a pipe, so programs block-buffer it and wait_for or
+	// read_process_output see nothing for a long time. Ask the common
+	// runtimes to flush line by line (callers can override in env).
+	for k, v := range map[string]string{"PYTHONUNBUFFERED": "1", "NODE_DISABLE_COLORS": "1"} {
+		if _, ok := req.Env[k]; !ok {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 	p := &proc{log: &ringLog{}, cmd: cmd, done: make(chan struct{})}
 	p.changed = sync.NewCond(&p.mu)
 	w := &procWriter{p: p}
