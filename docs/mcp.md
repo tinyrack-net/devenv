@@ -6,13 +6,23 @@ create their own development environments and run commands in them.
 - Endpoint: `<console URL>/mcp` (Streamable HTTP, stateless)
 - Auth: `Authorization: Bearer <token>`
 
+Create a personal access token in the console (Access tokens → New token, scope `mcp`).
+The console shows the endpoint and a client configuration snippet. Tools act as the token's
+user: agents see and change only that user's environments (and those shared with them), the
+user's limits apply, and every call shows up live in the workspace's agent activity panel.
+
+The single token of earlier versions still works and acts as the local administrator (or
+`mcp.legacyTokenUser`):
+
 ```sh
 kubectl -n devenv-system get secret devenv-keys -o jsonpath='{.data.mcp-token}' | base64 -d; echo
 ```
 
-The token has full access (same as the console admin). To rotate it, delete the `mcp-token`
-key from the Secret and restart the server, or set `mcp.existingSecret` to your own Secret
-(key `token`).
+Disable it with `mcp.legacyToken: false` once agents use personal tokens.
+
+Tools that wait for an environment (`create_environment`, `start_environment`,
+`restart_environment`) return after about 90 seconds with a note when it is still starting,
+so gateways that cut tool calls at 120 seconds do not retry them; poll `get_environment`.
 
 ## Tools
 
@@ -21,7 +31,7 @@ key from the Secret and restart the server, or set `mcp.existingSecret` to your 
 | `list_images` | Images available for new environments |
 | `list_classes` | Classes: storage, network mode and limits |
 | `get_capacity` | Largest CPU / memory / disk currently available in a class |
-| `list_environments` | Environments (`created_by_mcp_only` filter) |
+| `list_environments` | Your and shared environments (`created_by_mcp_only`; `all` for admins) |
 | `get_environment` | State, address, SSH command, usage (memory, `/home/dev` disk), restarts, last crash/OOM, warnings |
 | `create_environment` | Create; waits until running by default |
 | `update_environment` | Change image, CPU, memory, disk, ports |

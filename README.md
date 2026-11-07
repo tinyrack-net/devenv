@@ -2,8 +2,10 @@
 
 Remote development environments on Kubernetes.
 
-- Create, start, stop and delete development environments from a web console
-- SSH access, web terminal and VNC desktop
+- Web console: environments, a workspace with persistent terminals (survive reloads, shareable),
+  VNC desktop, processes, ports and live agent activity
+- Users with OIDC login, sharing, personal and shared images, per-user limits and access tokens
+- SSH access through a gateway or dedicated addresses
 - Works on any conformant cluster; dedicated IPs via Multus are optional
 - MCP endpoint so AI agents can create environments and code in them: commands, file
   read/edit/write, ripgrep search and background processes
@@ -40,14 +42,5 @@ make build-all            # build web console and embed it into bin/devenv
 
 ## Configuration
 
-| Env var / flag | Default | Description |
-|---|---|---|
-| `DEVENV_ENVIRONMENT_NAMESPACE` | `devenv` | Namespace for environments |
-| `DEVENV_HTTP_ADDR` | `:8080` | API and web console |
-| `DEVENV_AUTH_MODE` | `password` | `password` or `none` (development only) |
-| `DEVENV_ADMIN_USERNAME` | `admin` | Admin username |
-| `DEVENV_ADMIN_PASSWORD` / `_FILE` | required | Admin password |
-| `DEVENV_KEYS_SECRET` | `devenv-keys` | Secret (in `POD_NAMESPACE`) where the server stores generated session and SSH keys |
-| `DEVENV_SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
-| `DEVENV_MCP_ENABLED` | `true` | Serve `/mcp` |
-| `DEVENV_MCP_TOKEN` / `_FILE` | generated | MCP bearer token (default: `mcp-token` in the keys Secret) |
+See [docs/configuration.md](docs/configuration.md): login methods (local account, OIDC), users,
+sharing, limits and the configuration file.
