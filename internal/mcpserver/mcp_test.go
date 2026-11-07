@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -158,6 +159,7 @@ func buildHelper(t *testing.T) string {
 }
 
 type harness struct {
+	schemas map[string]*jsonschema.Resolved
 	srv     *Server
 	t       *testing.T
 	c       client.Client
@@ -267,6 +269,44 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(r)
 }
 
+// validateOutput checks a tool result against the tool's output schema, the
+// way strict clients (Open WebUI, Claude) do.
+func (h *harness) validateOutput(name string, out any) {
+	h.t.Helper()
+	if h.schemas == nil {
+		res, err := h.session.ListTools(context.Background(), nil)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		h.schemas = map[string]*jsonschema.Resolved{}
+		for _, tool := range res.Tools {
+			if tool.OutputSchema == nil {
+				continue
+			}
+			b, _ := json.Marshal(tool.OutputSchema)
+			var sc jsonschema.Schema
+			if err := json.Unmarshal(b, &sc); err != nil {
+				h.t.Fatalf("%s: schema: %v", tool.Name, err)
+			}
+			rs, err := sc.Resolve(nil)
+			if err != nil {
+				h.t.Fatalf("%s: resolve schema: %v", tool.Name, err)
+			}
+			h.schemas[tool.Name] = rs
+		}
+	}
+	rs := h.schemas[name]
+	if rs == nil {
+		return
+	}
+	b, _ := json.Marshal(out)
+	var v any
+	_ = json.Unmarshal(b, &v)
+	if err := rs.Validate(v); err != nil {
+		h.t.Errorf("%s: output does not match its schema: %v\n%s", name, err, b)
+	}
+}
+
 // connectAs opens a second MCP session with a personal token of user.
 func (h *harness) connectAs(user string, role devenvv1.Role) *harness {
 	h.t.Helper()
@@ -301,6 +341,9 @@ func (h *harness) call(name string, args map[string]any, out any) (isError bool,
 		if tc, ok := c.(*mcp.TextContent); ok {
 			text += tc.Text
 		}
+	}
+	if !res.IsError && res.StructuredContent != nil {
+		h.validateOutput(name, res.StructuredContent)
 	}
 	if out != nil && !res.IsError {
 		b, _ := json.Marshal(res.StructuredContent)
@@ -351,6 +394,13 @@ func TestToolsListed(t *testing.T) {
 
 func TestLifecycleAndExec(t *testing.T) {
 	h := newHarness(t)
+
+	var capOut capacityOut
+	if isErr, text := h.call("get_capacity", map[string]any{}, &capOut); isErr || capOut.MaxCPU == "" || len(capOut.Nodes) != 1 {
+		t.Fatalf("get_capacity: %v %s %+v", isErr, text, capOut)
+	}
+	var classes listClassesOut
+	h.call("list_classes", nil, &classes)
 
 	var imgs listImagesOut
 	h.call("list_images", nil, &imgs)

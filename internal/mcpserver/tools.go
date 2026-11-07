@@ -82,6 +82,25 @@ type listClassesOut struct {
 	Classes []api.Class `json:"classes"`
 }
 
+// capacityOut is the MCP view of class capacity. Quantities are strings:
+// resource.Quantity marshals to a string but its generated schema is an
+// object, which fails output validation in clients.
+type capacityOut struct {
+	Class     string         `json:"class"`
+	MaxCPU    string         `json:"max_cpu" jsonschema:"largest CPU a new environment can request"`
+	MaxMemory string         `json:"max_memory"`
+	MaxDisk   string         `json:"max_disk,omitempty"`
+	Nodes     []nodeCapacity `json:"nodes"`
+}
+
+type nodeCapacity struct {
+	Name       string `json:"name"`
+	FreeCPU    string `json:"free_cpu"`
+	FreeMemory string `json:"free_memory"`
+	CPU        string `json:"allocatable_cpu"`
+	Memory     string `json:"allocatable_memory"`
+}
+
 type capacityIn struct {
 	Class string `json:"class,omitempty" jsonschema:"class name; defaults to the default class"`
 }
@@ -165,13 +184,23 @@ func (s *Server) register(srv *mcp.Server) {
 		}))
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_capacity", Description: "Show the largest CPU, memory and disk that can currently be requested in a class.", Annotations: readOnly},
-		logged("get_capacity", func(ctx context.Context, _ *mcp.CallToolRequest, in capacityIn) (*mcp.CallToolResult, *api.Capacity, error) {
+		logged("get_capacity", func(ctx context.Context, _ *mcp.CallToolRequest, in capacityIn) (*mcp.CallToolResult, capacityOut, error) {
 			class := in.Class
 			if class == "" {
 				class = devenvv1.DefaultClassName
 			}
 			c, err := s.API.ClassCapacity(ctx, who(ctx), class, "")
-			return nil, c, userErr(err)
+			if err != nil {
+				return nil, capacityOut{}, userErr(err)
+			}
+			out := capacityOut{Class: c.Class, MaxCPU: c.MaxCPU, MaxMemory: c.MaxMem, MaxDisk: c.MaxDisk, Nodes: []nodeCapacity{}}
+			for _, n := range c.Nodes {
+				out.Nodes = append(out.Nodes, nodeCapacity{
+					Name: n.Name, FreeCPU: n.Free.CPU.String(), FreeMemory: n.Free.Memory.String(),
+					CPU: n.Allocable.CPU.String(), Memory: n.Allocable.Memory.String(),
+				})
+			}
+			return nil, out, nil
 		}))
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_environments", Description: "List development environments.", Annotations: readOnly},
