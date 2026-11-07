@@ -101,7 +101,7 @@ type nameIn struct {
 
 type waitIn struct {
 	Name string `json:"name" jsonschema:"environment name"`
-	Wait *bool  `json:"wait,omitempty" jsonschema:"wait until the change is complete (default true, up to 5 minutes)"`
+	Wait *bool  `json:"wait,omitempty" jsonschema:"wait until the change is complete (default true, up to 3 minutes)"`
 }
 
 type createIn struct {
@@ -112,7 +112,7 @@ type createIn struct {
 	Memory string          `json:"memory,omitempty" jsonschema:"memory, e.g. 4Gi; image default when empty"`
 	Disk   string          `json:"disk,omitempty" jsonschema:"home volume size, e.g. 20Gi; can only grow later"`
 	Ports  []api.PortInput `json:"ports,omitempty" jsonschema:"ports to expose (loadBalancer classes only)"`
-	Wait   *bool           `json:"wait,omitempty" jsonschema:"wait until running (default true, up to 5 minutes)"`
+	Wait   *bool           `json:"wait,omitempty" jsonschema:"wait until running (default true, up to 3 minutes)"`
 }
 
 type updateIn struct {
@@ -208,7 +208,7 @@ func (s *Server) register(srv *mcp.Server) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_environment",
-		Description: "Create a new development environment. By default waits until it is running (up to 5 minutes).",
+		Description: "Create a new development environment. By default waits until it is running (up to 3 minutes).",
 	}, logged("create_environment", func(ctx context.Context, _ *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, envOut, error) {
 		env, err := s.API.CreateEnvironment(ctx, who(ctx), api.CreateEnvironmentRequest{
 			Name:      in.Name,
@@ -328,7 +328,7 @@ func (s *Server) getEnv(ctx context.Context, name string) (*devenvv1.DevEnvironm
 
 // WaitLimit bounds how long tools wait for an environment. After it the
 // tool returns the current state with a note instead of failing.
-var WaitLimit = 5 * time.Minute
+var WaitLimit = 3 * time.Minute
 
 // waitSoft waits up to WaitLimit. When the environment is not ready yet it
 // returns its current state with a note instead of an error.

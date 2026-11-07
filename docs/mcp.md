@@ -21,7 +21,7 @@ kubectl -n devenv-system get secret devenv-keys -o jsonpath='{.data.mcp-token}' 
 Disable it with `mcp.legacyToken: false` once agents use personal tokens.
 
 Tools that wait for an environment (`create_environment`, `start_environment`,
-`restart_environment`) wait up to 5 minutes by default (`wait: false` returns at once). MCP
+`restart_environment`) wait up to 3 minutes by default (`wait: false` returns at once). MCP
 clients and gateways in front of devenv must allow tool calls that long.
 
 ## Tools
