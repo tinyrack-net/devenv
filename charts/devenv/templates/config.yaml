@@ -27,7 +27,6 @@
     "oidc" $oidc)
   "users" $users
   "mcp" $mcp
-  "preview" (dict "domain" .Values.preview.domain)
 }}
 {{- $cfg = mustMergeOverwrite $cfg (deepCopy .Values.config) }}
 apiVersion: v1

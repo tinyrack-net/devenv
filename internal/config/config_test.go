@@ -35,7 +35,6 @@ auth:
       adminGroups: [admins]
 users:
   defaultLimits: {maxEnvironments: 3, cpu: "4", memory: 16Gi}
-preview: {domain: preview.example.com}
 `)
 	c, err := Load(p)
 	if err != nil {
@@ -80,11 +79,11 @@ func TestValidate(t *testing.T) {
 		want string
 	}{
 		"password required": {Config{}, "password or passwordFile"},
-		"no login": {Config{Auth: Auth{Password: Password{Enabled: new(false)}}}, "at least one OIDC"},
-		"oidc needs url": {Config{Auth: Auth{Password: Password{Password: "x"}, OIDC: []OIDCProvider{{ID: "a", Issuer: "https://a", ClientID: "c"}}}}, "externalURL is required"},
-		"bad id": {Config{Server: Server{ExternalURL: "https://x"}, Auth: Auth{Password: Password{Password: "x"}, OIDC: []OIDCProvider{{ID: "password", Issuer: "https://a", ClientID: "c"}}}}, "reserved"},
-		"bad limit": {Config{Auth: Auth{Password: Password{Password: "x"}}, Users: Users{DefaultLimits: Limits{CPU: "lots"}}}, "invalid cpu"},
-		"disabled ok": {Config{Auth: Auth{Disabled: true}}, ""},
+		"no login":          {Config{Auth: Auth{Password: Password{Enabled: new(false)}}}, "at least one OIDC"},
+		"oidc needs url":    {Config{Auth: Auth{Password: Password{Password: "x"}, OIDC: []OIDCProvider{{ID: "a", Issuer: "https://a", ClientID: "c"}}}}, "externalURL is required"},
+		"bad id":            {Config{Server: Server{ExternalURL: "https://x"}, Auth: Auth{Password: Password{Password: "x"}, OIDC: []OIDCProvider{{ID: "password", Issuer: "https://a", ClientID: "c"}}}}, "reserved"},
+		"bad limit":         {Config{Auth: Auth{Password: Password{Password: "x"}}, Users: Users{DefaultLimits: Limits{CPU: "lots"}}}, "invalid cpu"},
+		"disabled ok":       {Config{Auth: Auth{Disabled: true}}, ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

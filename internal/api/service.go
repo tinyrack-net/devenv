@@ -15,7 +15,9 @@ import (
 func ToEnvironment(e *devenvv1.DevEnvironment) Environment { return toEnvironment(e) }
 
 // View converts an environment for a caller with the given access level.
-func (s *Server) View(e *devenvv1.DevEnvironment, lvl access.Level) Environment { return s.view(e, lvl) }
+func (s *Server) View(e *devenvv1.DevEnvironment, lvl access.Level) Environment {
+	return s.view(e, lvl)
+}
 
 // ErrorMessage returns a user facing message and whether the error was caused by the request.
 func ErrorMessage(err error) (msg string, userError bool) {

@@ -217,7 +217,6 @@ export interface Info {
   namespace: string;
   ssh: SSHInfo;
   auth: AuthInfo;
-  previewDomain?: string;
   mcp: boolean;
   providers: ProviderInfo[];
 }
@@ -405,10 +404,6 @@ export interface Port extends ListeningPort {
    * URL on the environment's own address (loadBalancer, multus).
    */
   url?: string;
-  /**
-   * PreviewURL through the devenv server (preview.domain).
-   */
-  previewURL?: string;
   /**
    * Exposed reports whether the port is reachable on the environment IP.
    */

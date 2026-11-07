@@ -60,7 +60,6 @@ func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 		Namespace: s.Namespace,
 		SSH:       s.SSH,
 		Auth:      AuthInfo{Disabled: s.Config.Auth.Disabled, Password: s.Config.Auth.Password.IsEnabled()},
-		Preview:   s.Config.Preview.Domain,
 		MCP:       s.Config.MCP.IsEnabled(),
 		Providers: []ProviderInfo{},
 	}

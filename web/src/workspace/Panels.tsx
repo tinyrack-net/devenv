@@ -168,11 +168,6 @@ export function PortsPanel({ env, ready }: { env: Environment; ready: boolean })
                     <ExternalLink className="size-3.5" /> IP
                   </a>
                 )}
-                {p.previewURL && (
-                  <a className="btn btn-ghost btn-xs" href={p.previewURL} target="_blank" rel="noreferrer" title={p.previewURL}>
-                    <ExternalLink className="size-3.5" /> Preview
-                  </a>
-                )}
               </div>
             </div>
             {target && (

@@ -68,11 +68,6 @@ users:
   #  disk: 200Gi
   adminLimits: null
 
-# -- Port previews at https://<port>-<env>.<domain> (needs wildcard DNS and TLS
-# routed to the console). Empty disables them.
-preview:
-  domain: ""
-
 # -- Extra configuration merged into the generated devenv.yaml (see
 # docs/configuration.md). Values set here win.
 config: {}

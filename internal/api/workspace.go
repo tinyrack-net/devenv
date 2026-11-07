@@ -155,8 +155,6 @@ type Port struct {
 	agent.ListeningPort `tstype:",extends"`
 	// URL on the environment's own address (loadBalancer, multus).
 	URL string `json:"url,omitempty"`
-	// PreviewURL through the devenv server (preview.domain).
-	PreviewURL string `json:"previewURL,omitempty"`
 	// Exposed reports whether the port is reachable on the environment IP.
 	Exposed bool `json:"exposed"`
 }
@@ -199,9 +197,6 @@ func (s *Server) listPorts(w http.ResponseWriter, r *http.Request) {
 				if pp.Exposed {
 					pp.URL = "http://" + env.Status.IP + ":" + strconv.Itoa(p.Port)
 				}
-			}
-			if d := s.Config.Preview.Domain; d != "" {
-				pp.PreviewURL = "https://" + strconv.Itoa(p.Port) + "-" + name + "." + d + "/"
 			}
 			out = append(out, pp)
 		}

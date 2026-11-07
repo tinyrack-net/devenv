@@ -161,7 +161,6 @@ type Info struct {
 	Namespace string         `json:"namespace"`
 	SSH       SSHInfo        `json:"ssh"`
 	Auth      AuthInfo       `json:"auth"`
-	Preview   string         `json:"previewDomain,omitempty"`
 	MCP       bool           `json:"mcp"`
 	Providers []ProviderInfo `json:"providers"`
 }

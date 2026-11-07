@@ -24,12 +24,11 @@ import (
 
 // Config is the server configuration file.
 type Config struct {
-	Server  Server  `json:"server"`
-	Auth    Auth    `json:"auth"`
-	Users   Users   `json:"users"`
-	MCP     MCP     `json:"mcp"`
-	SSH     SSH     `json:"ssh"`
-	Preview Preview `json:"preview"`
+	Server Server `json:"server"`
+	Auth   Auth   `json:"auth"`
+	Users  Users  `json:"users"`
+	MCP    MCP    `json:"mcp"`
+	SSH    SSH    `json:"ssh"`
 }
 
 type Server struct {
@@ -142,12 +141,6 @@ func (l LegacyToken) IsEnabled() bool { return l.Enabled == nil || *l.Enabled }
 type SSH struct {
 	PublicHost string `json:"publicHost,omitempty"`
 	PublicPort int    `json:"publicPort,omitempty"`
-}
-
-type Preview struct {
-	// Domain enables port previews at https://<port>-<env>.<domain>. The
-	// wildcard DNS name and certificate must route to the devenv server.
-	Domain string `json:"domain,omitempty"`
 }
 
 // Duration is a time.Duration written as "168h".
