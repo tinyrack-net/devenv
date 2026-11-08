@@ -115,10 +115,10 @@ export function PortsInput({ value, onChange }: { value: PortInput[]; onChange: 
   return (
     <div className="space-y-2">
       {value.map((p, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={i} className="flex flex-wrap items-center gap-2">
           <input
             type="number"
-            className="input input-sm w-28"
+            className="input input-sm w-24"
             min={1}
             max={65535}
             value={p.port || ""}
@@ -134,7 +134,7 @@ export function PortsInput({ value, onChange }: { value: PortInput[]; onChange: 
             <option>UDP</option>
           </select>
           <input
-            className="input input-sm flex-1"
+            className="input input-sm min-w-32 flex-1"
             placeholder="name (optional)"
             value={p.name ?? ""}
             onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}

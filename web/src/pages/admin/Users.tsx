@@ -185,7 +185,7 @@ export function AdminUsersPage() {
       {users.data?.length === 0 && <Empty icon={<UsersIcon className="size-10" />} title="No users" />}
       {!!users.data?.length && (
         <div className="overflow-x-auto rounded-box border border-base-300 bg-base-100">
-          <table className="table">
+          <table className="table table-stack">
             <thead>
               <tr>
                 <th>User</th>
@@ -209,7 +209,7 @@ export function AdminUsersPage() {
                       {u.email && ` · ${u.email}`}
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Role">
                     {u.admin ? (
                       <span className="badge badge-primary badge-soft badge-sm gap-1">
                         <Shield className="size-3" /> admin
@@ -219,19 +219,19 @@ export function AdminUsersPage() {
                     )}
                     {u.groups.length > 0 && <div className="mt-1 text-xs text-base-content/50">{u.groups.join(", ")}</div>}
                   </td>
-                  <td className="text-sm">
+                  <td data-label="Usage" className="text-sm">
                     {u.usage && (
                       <Link to={`/admin/environments?owner=${u.name}`} className="link-hover">
                         {u.usage.environments} envs ({u.usage.running} running) · {formatCPU(u.usage.cpu)} · {formatBytes(u.usage.memory)}
                       </Link>
                     )}
                   </td>
-                  <td className="text-sm">
+                  <td data-label="Last sign-in" className="text-sm">
                     {timeAgo(u.lastLoginAt)}
                     {u.lastLoginProvider && <div className="text-xs text-base-content/50">{u.lastLoginProvider}</div>}
                   </td>
-                  <td className="text-right">
-                    <button className="btn btn-ghost btn-sm" onClick={() => setEdit(u)}>
+                  <td className="text-right max-md:pt-2 max-md:text-left">
+                    <button className="btn btn-ghost btn-sm max-md:btn-outline" onClick={() => setEdit(u)}>
                       Edit
                     </button>
                   </td>

@@ -24,6 +24,7 @@ import {
 import { api, ApiError, type Environment, type Process, type PtySession } from "../lib/api";
 import { useInfo, useMe } from "../lib/prefs";
 import { formatBytes } from "../lib/quantity";
+import { useIsMobile } from "../lib/media";
 import { useRegisterCommands, type Command } from "../components/CommandPalette";
 import { ErrorAlert, Loading, PhaseBadge, Spinner, cx } from "../components/ui";
 import { ThemeSwitch, UserMenu } from "../components/Layout";
@@ -79,6 +80,7 @@ const sidePanels: { id: SidePanel; label: string; icon: ReactNode }[] = [
 
 function Workspace({ env }: { env: Environment }) {
   const navigate = useNavigate();
+  const mobile = useIsMobile();
   const qc = useQueryClient();
   const me = useMe();
   useInfo();
@@ -236,7 +238,7 @@ function Workspace({ env }: { env: Environment }) {
               {t.kind === "terminal" ? <SquareTerminal className="size-3.5" /> : t.kind === "desktop" ? <Monitor className="size-3.5" /> : <ScrollText className="size-3.5" />}
               <span className="max-w-40 truncate">{t.title}</span>
               <div className="dropdown dropdown-bottom">
-                <button tabIndex={0} className="btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100" onClick={(e) => e.stopPropagation()} title="Close">
+                <button tabIndex={0} className="btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100 pointer-coarse:opacity-60" onClick={(e) => e.stopPropagation()} title="Close">
                   <X className="size-3" />
                 </button>
                 {t.kind === "terminal" ? (
@@ -324,9 +326,135 @@ function Workspace({ env }: { env: Environment }) {
 
   const sideOpen = !!layout.side;
   const shared = env.sharing.users.length + env.sharing.groups.length > 0;
+  const sideContent = (
+    <>
+      {layout.side === "activity" && <ActivityPanel env={env.name} />}
+      {layout.side === "processes" && <ProcessesPanel env={env.name} ready={ready} onOpenLog={(p) => { openLog(p); if (mobile) setSide(undefined); }} />}
+      {layout.side === "ports" && <PortsPanel env={env} ready={ready} />}
+      {layout.side === "status" && <StatusPanel env={env} ready={ready} />}
+      {layout.side === "connect" && <ConnectPanel env={env} />}
+    </>
+  );
+  const sideHeader = (
+    <div className="flex items-center gap-2 border-b border-base-300 px-3 py-2 text-sm font-medium">
+      {sidePanels.find((p) => p.id === layout.side)?.icon}
+      {sidePanels.find((p) => p.id === layout.side)?.label}
+      <div className="flex-1" />
+      <button className="btn btn-ghost btn-sm btn-square md:btn-xs" aria-label="Close panel" onClick={() => setSide(undefined)}>
+        {mobile ? <X className="size-5" /> : <PanelRightClose className="size-4" />}
+      </button>
+    </div>
+  );
+
+  if (mobile) {
+    // One pane, panels as a full screen sheet, navigation at the bottom.
+    const pane0 = layout.panes.flatMap((p) => p.tabs);
+    const activeKey = layout.panes[layout.focused]?.active ?? pane0[0]?.key;
+    const activeTab = pane0.find((t) => t.key === activeKey) ?? pane0[0];
+    return (
+      <div className="h-dvh-safe flex flex-col bg-base-100">
+        <header className="flex items-center gap-1 border-b border-base-300 px-1 py-1 pt-[max(0.25rem,env(safe-area-inset-top))]">
+          <Link to="/" className="btn btn-ghost btn-sm btn-square" aria-label="All environments">
+            <ArrowLeft className="size-5" />
+          </Link>
+          <span className="min-w-0 truncate font-semibold">{env.name}</span>
+          <PhaseBadge phase={env.phase} deleting={env.deleting} size="xs" />
+          {agentRunning > 0 && (
+            <button className="badge badge-secondary badge-xs gap-1" onClick={() => setLayout((l) => ({ ...l, side: "activity" }))}>
+              <Bot className="size-3" /> {agentRunning}
+            </button>
+          )}
+          <div className="flex-1" />
+          <PowerButton env={env} className="btn-xs" />
+          <EnvMenu env={env} onDeleted={() => navigate("/")} />
+        </header>
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-200 px-1 py-1">
+          {pane0.map((t) => (
+            <div
+              key={t.key}
+              className={cx(
+                "flex shrink-0 items-center gap-1 rounded-field py-1 pr-1 pl-2.5 text-sm",
+                activeTab?.key === t.key ? "bg-base-100 font-medium shadow-sm" : "text-base-content/60",
+              )}
+              onClick={() => update((l) => activate(l, t.key))}
+            >
+              {t.kind === "terminal" ? <SquareTerminal className="size-3.5" /> : t.kind === "desktop" ? <Monitor className="size-3.5" /> : <ScrollText className="size-3.5" />}
+              <span className="max-w-28 truncate">{t.title}</span>
+              <button
+                className="btn btn-ghost btn-xs btn-square"
+                aria-label={`Close ${t.title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (t.kind === "terminal") closeTerminalTab(t, false);
+                  else update((l) => closeTab(l, t.key));
+                }}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ))}
+          <button className="btn btn-ghost btn-sm btn-square shrink-0" aria-label="New terminal" onClick={() => openTerminal(undefined, 0)}>
+            <Plus className="size-4" />
+          </button>
+          {env.desktop && !pane0.some((t) => t.kind === "desktop") && (
+            <button className="btn btn-ghost btn-sm btn-square shrink-0" aria-label="Desktop" onClick={openDesktop}>
+              <Monitor className="size-4" />
+            </button>
+          )}
+          {orphanSessions.map((s) => (
+            <button key={s.id} className="btn btn-ghost btn-xs shrink-0 text-base-content/60" onClick={() => openTerminal(s, 0)}>
+              <SquareTerminal className="size-3" /> {s.name}
+            </button>
+          ))}
+        </div>
+        <div className="relative min-h-0 flex-1">
+          {pane0.length === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-base-content/60">
+              <button className="btn btn-sm" onClick={() => openTerminal(undefined, 0)}>
+                <SquareTerminal className="size-4" /> Terminal
+              </button>
+              {env.desktop && (
+                <button className="btn btn-sm" onClick={openDesktop}>
+                  <Monitor className="size-4" /> Desktop
+                </button>
+              )}
+            </div>
+          )}
+          {pane0.map((t) => (
+            <div key={t.key} className={cx("absolute inset-0", activeTab?.key !== t.key && "invisible")}>
+              {renderTab(t, activeTab?.key === t.key && !sideOpen)}
+            </div>
+          ))}
+          {!ready && pane0.length > 0 && <NotReady env={env} />}
+          {sideOpen && (
+            <div className="absolute inset-0 z-30 flex flex-col bg-base-100">
+              {sideHeader}
+              <div className="min-h-0 flex-1 overflow-y-auto">{sideContent}</div>
+            </div>
+          )}
+        </div>
+        <nav className="flex items-stretch justify-around border-t border-base-300 bg-base-200 pb-[env(safe-area-inset-bottom)]">
+          {sidePanels.map((p) => (
+            <button
+              key={p.id}
+              className={cx("relative flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px]", layout.side === p.id ? "text-primary" : "text-base-content/60")}
+              onClick={() => setSide(p.id)}
+            >
+              {p.icon}
+              {p.label.replace("Agent activity", "Agent")}
+              {p.id === "activity" && agentRunning > 0 && <span className="badge badge-secondary badge-xs absolute top-0.5 right-1/4">{agentRunning}</span>}
+            </button>
+          ))}
+          <Link to={`/env/${env.name}/settings`} className="flex flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] text-base-content/60">
+            <Settings className="size-4" /> Settings
+          </Link>
+        </nav>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen flex-col bg-base-100">
+    <div className="h-dvh-safe flex flex-col bg-base-100">
       {/* Top bar */}
       <header className="flex items-center gap-2 border-b border-base-300 px-2 py-1.5">
         <Link to="/" className="btn btn-ghost btn-sm btn-square" title="All environments">
@@ -339,9 +467,9 @@ function Workspace({ env }: { env: Environment }) {
             {env.image} · {env.resources.cpu ?? "?"} CPU · {env.resources.memory ? formatBytes(env.resources.memory) : "?"}
             {env.ip && ` · ${env.ip}`}
           </span>
-          {env.owner !== me.data?.name && <span className="badge badge-soft badge-sm">by {env.owner}</span>}
+          {env.owner !== me.data?.name && <span className="badge badge-soft badge-sm hidden lg:inline-flex">by {env.owner}</span>}
           {shared && (
-            <span className="badge badge-soft badge-info badge-sm gap-1" title={[...env.sharing.users, ...env.sharing.groups.map((g) => `@${g}`)].join(", ")}>
+            <span className="badge badge-soft badge-info badge-sm hidden gap-1 lg:inline-flex" title={[...env.sharing.users, ...env.sharing.groups.map((g) => `@${g}`)].join(", ")}>
               <Share2 className="size-3" /> shared
             </span>
           )}
@@ -374,7 +502,9 @@ function Workspace({ env }: { env: Environment }) {
         </button>
         <PowerButton env={env} className="btn-sm" />
         <EnvMenu env={env} onDeleted={() => navigate("/")} />
-        <ThemeSwitch />
+        <span className="hidden lg:contents">
+          <ThemeSwitch />
+        </span>
         <UserMenu />
       </header>
 
@@ -402,21 +532,8 @@ function Workspace({ env }: { env: Environment }) {
                 <Separator className="resize-handle w-1" />
                 <Panel id="side" defaultSize="26" minSize="16" maxSize="50">
                   <div className="flex h-full flex-col border-l border-base-300 bg-base-100">
-                    <div className="flex items-center gap-2 border-b border-base-300 px-3 py-2 text-sm font-medium">
-                      {sidePanels.find((p) => p.id === layout.side)?.icon}
-                      {sidePanels.find((p) => p.id === layout.side)?.label}
-                      <div className="flex-1" />
-                      <button className="btn btn-ghost btn-xs btn-square" onClick={() => setSide(undefined)}>
-                        <PanelRightClose className="size-4" />
-                      </button>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      {layout.side === "activity" && <ActivityPanel env={env.name} />}
-                      {layout.side === "processes" && <ProcessesPanel env={env.name} ready={ready} onOpenLog={openLog} />}
-                      {layout.side === "ports" && <PortsPanel env={env} ready={ready} />}
-                      {layout.side === "status" && <StatusPanel env={env} ready={ready} />}
-                      {layout.side === "connect" && <ConnectPanel env={env} />}
-                    </div>
+                    {sideHeader}
+                    <div className="min-h-0 flex-1 overflow-y-auto">{sideContent}</div>
                   </div>
                 </Panel>
               </>

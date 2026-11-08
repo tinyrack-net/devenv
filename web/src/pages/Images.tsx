@@ -123,10 +123,10 @@ function ImageRow({ img, onEdit }: { img: Image; onEdit: () => void }) {
         </div>
         <div className="text-xs text-base-content/50">{img.description}</div>
       </td>
-      <td>
+      <td data-label="Image">
         <code className="font-mono-tight break-all">{img.image}</code>
       </td>
-      <td>
+      <td data-label="Scope">
         <div className="flex flex-wrap gap-1">
           {img.owner ? (
             <span className="badge badge-soft badge-sm gap-1">
@@ -141,7 +141,7 @@ function ImageRow({ img, onEdit }: { img: Image; onEdit: () => void }) {
           {img.disabled && <span className="badge badge-soft badge-warning badge-sm">disabled</span>}
         </div>
       </td>
-      <td className="text-sm">{img.inUse}</td>
+      <td data-label="In use" className="text-sm">{img.inUse}</td>
       <td>
         {img.canManage && (
           <div className="flex justify-end gap-1">
@@ -188,7 +188,7 @@ export function ImagesPage() {
       {images.data?.length === 0 && <Empty icon={<Layers className="size-10" />} title="No images" />}
       {!!images.data?.length && (
         <div className="overflow-x-auto rounded-box border border-base-300 bg-base-100">
-          <table className="table">
+          <table className="table table-stack">
             <thead>
               <tr>
                 <th>Name</th>

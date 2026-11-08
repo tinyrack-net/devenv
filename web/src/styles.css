@@ -71,3 +71,45 @@
 .resize-handle[data-separator="active"] {
   @apply bg-primary;
 }
+
+/*
+ * Tables marked .table-stack become cards below the md breakpoint: each row
+ * is a block, cells stack, and data-label shows the column name.
+ */
+@media (max-width: 767px) {
+  .table-stack thead {
+    display: none;
+  }
+  .table-stack,
+  .table-stack tbody,
+  .table-stack tr,
+  .table-stack td {
+    display: block;
+    width: 100%;
+  }
+  .table-stack tr {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--color-base-300);
+  }
+  .table-stack tr:last-child {
+    border-bottom: 0;
+  }
+  .table-stack td {
+    padding: 0.2rem 0;
+    border: 0;
+  }
+  .table-stack td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.7rem;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  }
+  .table-stack td:empty {
+    display: none;
+  }
+}
+
+/* Full-height app shells follow the dynamic viewport on mobile browsers. */
+.h-dvh-safe {
+  height: 100dvh;
+}

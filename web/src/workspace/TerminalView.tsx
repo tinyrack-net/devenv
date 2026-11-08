@@ -8,6 +8,8 @@ import "@xterm/xterm/css/xterm.css";
 import { RotateCw, Search, X } from "lucide-react";
 import { wsURL, type PtySession } from "../lib/api";
 import { isDark, usePrefs } from "../lib/prefs";
+import { useIsTouch } from "../lib/media";
+import { cx } from "../components/ui";
 
 const darkTheme: ITheme = {
   background: "#16181d",
@@ -85,6 +87,12 @@ export function TerminalView({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
+  // Sends raw input to the session (used by the touch key bar).
+  const sendRef = useRef<(d: string) => void>(() => {});
+  const touch = useIsTouch();
+  const [ctrl, setCtrl] = useState(false);
+  const ctrlRef = useRef(false);
+  ctrlRef.current = ctrl;
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const [prefs] = usePrefs();
@@ -238,7 +246,17 @@ export function TerminalView({
       retry = setTimeout(() => setAttempt((a) => a + 1), Math.min(1000 * 2 ** Math.min(attempt, 4), 10000));
     };
 
-    const data = term.onData((d) => ws.readyState === WebSocket.OPEN && ws.send(enc.encode(d)));
+    const send = (d: string) => ws.readyState === WebSocket.OPEN && ws.send(enc.encode(d));
+    sendRef.current = (d) => void send(d);
+    const data = term.onData((d) => {
+      // A sticky Ctrl from the touch key bar applies to the next letter.
+      if (ctrlRef.current && d.length === 1 && /[a-z@\[\]\\^_ ]/i.test(d)) {
+        setCtrl(false);
+        const c = d.toUpperCase().charCodeAt(0);
+        d = d === " " ? "\x00" : String.fromCharCode(c & 0x1f);
+      }
+      send(d);
+    });
     const binary = term.onBinary((d) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       const buf = new Uint8Array(d.length);
@@ -275,7 +293,53 @@ export function TerminalView({
 
   return (
     <div className="relative h-full w-full" style={{ background: (prefs.terminalTheme === "auto" ? isDark() : prefs.terminalTheme === "dark") ? darkTheme.background : lightTheme.background }}>
-      <div className="xterm-host" ref={host} />
+      <div className={cx("xterm-host", touch && "bottom-10!")} ref={host} />
+      {touch && (
+        <div className="absolute inset-x-0 bottom-0 z-10 flex h-10 items-center gap-1 overflow-x-auto border-t border-base-300 bg-base-200 px-1">
+          {[
+            ["Esc", "\x1b"],
+            ["Tab", "\t"],
+            ["Ctrl", ""],
+            ["↑", "\x1b[A"],
+            ["↓", "\x1b[B"],
+            ["←", "\x1b[D"],
+            ["→", "\x1b[C"],
+            ["^C", "\x03"],
+            ["^D", "\x04"],
+            ["|", "|"],
+            ["~", "~"],
+            ["/", "/"],
+            ["-", "-"],
+          ].map(([label, seq]) => (
+            <button
+              key={label}
+              className={cx("btn btn-sm shrink-0 font-mono", label === "Ctrl" && ctrl && "btn-primary")}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (label === "Ctrl") setCtrl((c) => !c);
+                else sendRef.current(seq);
+                termRef.current?.focus();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            className="btn btn-sm shrink-0"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={async () => {
+              try {
+                const t = await navigator.clipboard.readText();
+                if (t) sendRef.current(t);
+              } catch {
+                /* permission denied */
+              }
+            }}
+          >
+            Paste
+          </button>
+        </div>
+      )}
       {searchOpen && (
         <div className="absolute top-2 right-4 z-10 flex items-center gap-1 rounded-field bg-base-100 p-1 shadow">
           <Search className="ml-1 size-3.5 opacity-60" />

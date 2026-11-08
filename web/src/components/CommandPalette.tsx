@@ -136,7 +136,7 @@ export function CommandPalette({ open, setOpen }: { open: boolean; setOpen: (o: 
   };
   let lastGroup = "";
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh]" onClick={() => setOpen(false)}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:p-0 sm:pt-[12vh]" onClick={() => setOpen(false)}>
       <div className="w-full max-w-xl overflow-hidden rounded-box bg-base-100 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <input
           ref={input}
@@ -160,7 +160,7 @@ export function CommandPalette({ open, setOpen }: { open: boolean; setOpen: (o: 
             if (e.key === "Enter" && filtered[sel]) run(filtered[sel]);
           }}
         />
-        <ul className="max-h-[50vh] overflow-y-auto p-2">
+        <ul className="max-h-[70dvh] overflow-y-auto p-2 sm:max-h-[50vh]">
           {filtered.length === 0 && <li className="p-4 text-sm text-base-content/60">No matches</li>}
           {filtered.map((c, i) => {
             const header = c.group !== lastGroup ? c.group : null;

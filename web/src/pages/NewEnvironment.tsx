@@ -99,7 +99,7 @@ export function NewEnvironmentPage() {
           create.mutate();
         }}
       >
-        <section className="rounded-box bg-base-100 p-5">
+        <section className="rounded-box bg-base-100 p-4 sm:p-5">
           <h2 className="mb-3 font-semibold">Image</h2>
           {[
             { title: "Shared", list: shared },
@@ -139,7 +139,7 @@ export function NewEnvironmentPage() {
           )}
         </section>
 
-        <section className="rounded-box bg-base-100 p-5">
+        <section className="rounded-box bg-base-100 p-4 sm:p-5">
           <div className="grid gap-x-6 md:grid-cols-2">
             <Field label="Name" hint="Lowercase letters, digits and '-', up to 40 characters. Used for SSH: ssh <name>@gateway.">
               <input
@@ -177,12 +177,12 @@ export function NewEnvironmentPage() {
         </section>
 
         <section className="rounded-box bg-base-100">
-          <button type="button" className="flex w-full items-center gap-2 p-5 font-semibold" onClick={() => setAdvanced((a) => !a)}>
+          <button type="button" className="flex w-full flex-wrap items-center gap-2 p-4 text-left font-semibold sm:p-5" onClick={() => setAdvanced((a) => !a)}>
             <ChevronDown className={cx("size-4 transition-transform", !advanced && "-rotate-90")} /> Advanced
             <span className="text-sm font-normal text-base-content/50">sharing, password, extra keys{klass?.networkMode === "loadBalancer" ? ", ports" : ""}</span>
           </button>
           {advanced && (
-            <div className="space-y-5 px-5 pb-5">
+            <div className="space-y-5 px-4 pb-4 sm:px-5 sm:pb-5">
               <div>
                 <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
                   <User className="size-4" /> Share with
@@ -225,11 +225,11 @@ export function NewEnvironmentPage() {
         </section>
 
         <ErrorAlert error={create.error} />
-        <div className="flex justify-end gap-2">
+        <div className="sticky bottom-0 -mx-3 flex justify-end gap-2 border-t border-base-300 bg-base-200/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
           <Link to="/" className="btn btn-ghost">
             Cancel
           </Link>
-          <button className="btn btn-primary" disabled={!nameOK || !image || create.isPending}>
+          <button className="btn btn-primary max-sm:flex-1" disabled={!nameOK || !image || create.isPending}>
             {create.isPending && <Spinner className="loading-xs" />} Create and open
           </button>
         </div>

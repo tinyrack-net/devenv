@@ -21,6 +21,7 @@ import {
   Users,
   Activity,
   Layers,
+  Search,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useEventStream, useStreamStatus } from "../lib/stream";
@@ -148,11 +149,17 @@ export function Layout() {
     <div className="drawer lg:drawer-open">
       <input id="nav" type="checkbox" className="drawer-toggle" checked={open} onChange={(e) => setOpen(e.target.checked)} />
       <div className="drawer-content flex min-h-screen flex-col">
-        <header className="navbar sticky top-0 z-20 gap-2 border-b border-base-300 bg-base-100/90 px-4 backdrop-blur">
-          <label htmlFor="nav" className="btn btn-ghost btn-sm btn-square lg:hidden">
+        <header className="navbar sticky top-0 z-20 min-h-14 gap-2 border-b border-base-300 bg-base-100/90 px-3 backdrop-blur sm:px-4">
+          <label htmlFor="nav" className="btn btn-ghost btn-sm btn-square lg:hidden" aria-label="Menu">
             <Menu className="size-5" />
           </label>
+          <Link to="/" className="flex items-center gap-1.5 font-semibold lg:hidden">
+            <Boxes className="size-5 text-primary" /> devenv
+          </Link>
           <div className="flex-1" />
+          <button className="btn btn-ghost btn-sm btn-square sm:hidden" aria-label="Search" onClick={() => window.dispatchEvent(new Event("devenv:palette"))}>
+            <Search className="size-4" />
+          </button>
           <StreamIndicator />
           <button
             className="btn btn-ghost btn-sm hidden gap-2 text-base-content/60 sm:flex"
@@ -163,7 +170,7 @@ export function Layout() {
           <ThemeSwitch />
           <UserMenu />
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
+        <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-6">
           <Outlet />
         </main>
       </div>
@@ -231,9 +238,9 @@ export function Layout() {
 /** Page header used by management pages. */
 export function PageHeader({ title, subtitle, actions }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-semibold">{title}</h1>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3 sm:mb-6">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold break-words sm:text-2xl">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-base-content/60">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}

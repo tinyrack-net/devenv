@@ -86,8 +86,8 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
 /** A monospace value with a copy button. */
 export function CopyField({ value, className }: { value: string; className?: string }) {
   return (
-    <div className={cx("flex items-start gap-1 rounded-field bg-base-200 px-3 py-2", className)}>
-      <code className="font-mono-tight flex-1 break-all whitespace-pre-wrap">{value}</code>
+    <div className={cx("flex min-w-0 items-start gap-1 rounded-field bg-base-200 px-3 py-2", className)}>
+      <code className="font-mono-tight max-h-80 min-w-0 flex-1 overflow-auto break-all whitespace-pre-wrap">{value}</code>
       <CopyButton text={value} />
     </div>
   );
@@ -141,8 +141,8 @@ export function Modal({
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="modal" onClose={onClose}>
-      <div className={cx("modal-box", wide && "max-w-3xl")}>
+    <dialog ref={ref} className="modal modal-bottom sm:modal-middle" onClose={onClose}>
+      <div className={cx("modal-box max-h-[90dvh]", wide && "sm:max-w-3xl")}>
         <button type="button" className="btn btn-sm btn-circle btn-ghost absolute top-3 right-3" onClick={onClose}>
           <X className="size-4" />
         </button>

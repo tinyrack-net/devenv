@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bot, LayoutGrid, List, Monitor, Plus, Search, Server, Share2, SquareTerminal } from "lucide-react";
 import { api, type Environment } from "../lib/api";
 import { useInfo, useMe, usePrefs } from "../lib/prefs";
+import { useIsMobile } from "../lib/media";
 import { formatBytes, formatCPU, ratio } from "../lib/quantity";
 import { sshCommand, sshTargets } from "../lib/connect";
 import { PageHeader } from "../components/Layout";
@@ -20,7 +21,7 @@ export function UsageSummary() {
   const limited = l.maxEnvironments || l.maxRunning || l.cpu || l.memory || l.disk;
   if (!limited) return null;
   return (
-    <div className="mb-6 grid grid-cols-2 gap-4 rounded-box bg-base-100 p-4 sm:grid-cols-5">
+    <div className="mb-4 grid grid-cols-2 gap-3 rounded-box bg-base-100 p-4 sm:mb-6 sm:grid-cols-5 sm:gap-4">
       <Meter
         value={l.maxEnvironments ? u.environments / l.maxEnvironments : undefined}
         label={`Environments ${u.environments}${l.maxEnvironments ? ` / ${l.maxEnvironments}` : ""}`}
@@ -57,8 +58,8 @@ function EnvCard({ env, me }: { env: Environment; me?: string }) {
   const ssh = sshTargets(env, info.data)[0];
   const ready = env.phase === "Running" && !env.deleting;
   return (
-    <div className="card border border-base-300 bg-base-100 transition-shadow hover:shadow-md">
-      <div className="card-body gap-3 p-5">
+    <div className="card min-w-0 border border-base-300 bg-base-100 transition-shadow hover:shadow-md">
+      <div className="card-body gap-3 p-4 sm:p-5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <Link to={`/env/${env.name}`} className="link-hover block truncate text-lg font-semibold">
@@ -95,7 +96,7 @@ function EnvCard({ env, me }: { env: Environment; me?: string }) {
             <CopyButton text={sshCommand(ssh)} />
           </div>
         )}
-        <div className="card-actions items-center justify-between pt-1">
+        <div className="card-actions flex-nowrap items-center justify-between pt-1">
           <PowerButton env={env} />
           <div className="flex gap-1">
             <button className="btn btn-sm btn-ghost" disabled={!ready} onClick={() => navigate(`/env/${env.name}?open=terminal`)} title="Terminal">
@@ -117,6 +118,15 @@ function EnvCard({ env, me }: { env: Environment; me?: string }) {
 }
 
 export function EnvTable({ envs, me, showOwner }: { envs: Environment[]; me?: string; showOwner?: boolean }) {
+  const mobile = useIsMobile();
+  if (mobile)
+    return (
+      <div className="grid gap-3">
+        {envs.map((e) => (
+          <EnvCard key={e.name} env={e} me={showOwner ? undefined : me} />
+        ))}
+      </div>
+    );
   return (
     <div className="overflow-x-auto rounded-box border border-base-300 bg-base-100">
       <table className="table">
@@ -172,6 +182,7 @@ export function EnvTable({ envs, me, showOwner }: { envs: Environment[]; me?: st
 
 export function EnvironmentsPage() {
   const me = useMe();
+  const mobile = useIsMobile();
   const [prefs, updatePrefs] = usePrefs();
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
@@ -213,19 +224,21 @@ export function EnvironmentsPage() {
       />
       <UsageSummary />
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <label className="input input-sm w-64">
+        <label className="input input-sm min-w-0 flex-1 sm:w-64 sm:flex-none">
           <Search className="size-4 opacity-50" />
           <input placeholder="Filter" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
-        <div className="join">
-          {(["all", "mine", "shared", "agent", "running"] as Filter[]).map((f) => (
-            <button key={f} className={cx("btn btn-sm join-item capitalize", filter === f && "btn-active")} onClick={() => setFilter(f)}>
-              {f === "shared" ? "Shared with me" : f === "agent" ? "By agents" : f}
-            </button>
-          ))}
+        <div className="order-last -mx-3 w-[calc(100%+1.5rem)] overflow-x-auto px-3 sm:order-none sm:mx-0 sm:w-auto sm:px-0">
+          <div className="join">
+            {(["all", "mine", "shared", "agent", "running"] as Filter[]).map((f) => (
+              <button key={f} className={cx("btn btn-sm join-item whitespace-nowrap capitalize", filter === f && "btn-active")} onClick={() => setFilter(f)}>
+                {f === "shared" ? "Shared with me" : f === "agent" ? "By agents" : f}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex-1" />
-        <div className="join">
+        <div className="hidden flex-1 sm:block" />
+        <div className="join hidden sm:inline-flex">
           <button className={cx("btn btn-sm join-item", prefs.listView === "cards" && "btn-active")} onClick={() => updatePrefs({ listView: "cards" })} title="Cards">
             <LayoutGrid className="size-4" />
           </button>
@@ -246,7 +259,7 @@ export function EnvironmentsPage() {
         </Empty>
       )}
       {list.length > 0 &&
-        (prefs.listView === "table" ? (
+        (prefs.listView === "table" && !mobile ? (
           <EnvTable envs={list} me={me.data?.name} />
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

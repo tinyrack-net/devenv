@@ -9,7 +9,7 @@ import { Confirm, CopyField, Empty, ErrorAlert, Field, Loading, Modal, Spinner, 
 export function TokenTable({ tokens, onRevoke, showUser }: { tokens: Token[]; onRevoke: (t: Token) => void; showUser?: boolean }) {
   return (
     <div className="overflow-x-auto rounded-box border border-base-300 bg-base-100">
-      <table className="table">
+      <table className="table table-stack">
         <thead>
           <tr>
             <th>Name</th>
@@ -30,8 +30,8 @@ export function TokenTable({ tokens, onRevoke, showUser }: { tokens: Token[]; on
                   <div className="font-medium">{t.name}</div>
                   <code className="font-mono-tight text-base-content/50">dvn_{t.id}_…</code>
                 </td>
-                {showUser && <td>{t.user}</td>}
-                <td>
+                {showUser && <td data-label="User">{t.user}</td>}
+                <td data-label="Scopes">
                   <div className="flex gap-1">
                     {t.scopes.map((s) => (
                       <span key={s} className="badge badge-sm">
@@ -40,10 +40,10 @@ export function TokenTable({ tokens, onRevoke, showUser }: { tokens: Token[]; on
                     ))}
                   </div>
                 </td>
-                <td className="text-sm">{timeAgo(t.createdAt)}</td>
-                <td className="text-sm">{t.expiresAt ? <span className={expired ? "text-error" : ""}>{formatTime(t.expiresAt)}</span> : "never"}</td>
-                <td className="text-sm">{t.lastUsedAt ? timeAgo(t.lastUsedAt) : "never"}</td>
-                <td className="text-right">
+                <td data-label="Created" className="text-sm">{timeAgo(t.createdAt)}</td>
+                <td data-label="Expires" className="text-sm">{t.expiresAt ? <span className={expired ? "text-error" : ""}>{formatTime(t.expiresAt)}</span> : "never"}</td>
+                <td data-label="Last used" className="text-sm">{t.lastUsedAt ? timeAgo(t.lastUsedAt) : "never"}</td>
+                <td className="text-right max-md:-mt-8 max-md:text-right">
                   <button className="btn btn-ghost btn-sm text-error" onClick={() => onRevoke(t)}>
                     <Trash2 className="size-4" />
                   </button>

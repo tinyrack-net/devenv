@@ -29,7 +29,7 @@ export function ProfilePage() {
       <UsageSummary />
       <div className="max-w-2xl space-y-4">
         <section className="rounded-box bg-base-100 p-5">
-          <dl className="grid grid-cols-[9rem_1fr] gap-y-2 text-sm">
+          <dl className="grid grid-cols-[7rem_1fr] gap-y-2 text-sm sm:grid-cols-[9rem_1fr]">
             <dt className="text-base-content/60">User name</dt>
             <dd className="font-mono">{me.data.name}</dd>
             <dt className="text-base-content/60">E-mail</dt>

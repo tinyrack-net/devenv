@@ -13,12 +13,12 @@ import { useEnvMutations } from "../components/EnvActions";
 
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <section className="grid gap-4 rounded-box bg-base-100 p-5 md:grid-cols-[14rem_1fr]">
+    <section className="grid min-w-0 gap-3 rounded-box bg-base-100 p-4 sm:p-5 md:grid-cols-[14rem_1fr] md:gap-4">
       <div>
         <h2 className="font-semibold">{title}</h2>
         {description && <p className="mt-1 text-sm text-base-content/60">{description}</p>}
       </div>
-      <div>{children}</div>
+      <div className="min-w-0">{children}</div>
     </section>
   );
 }
@@ -230,7 +230,7 @@ function Settings({ env }: { env: Environment }) {
         )}
 
         <Section title="Details">
-          <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
+          <dl className="grid grid-cols-[6.5rem_1fr] gap-y-1 text-sm sm:grid-cols-[8rem_1fr]">
             <dt className="text-base-content/60">Network</dt>
             <dd>{env.networkMode ?? "-"}</dd>
             <dt className="text-base-content/60">Address</dt>

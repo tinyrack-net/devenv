@@ -114,17 +114,17 @@ export function DesktopView({ env, active, ready }: { env: string; active: boole
 
   return (
     <div className="flex h-full w-full flex-col" ref={wrap}>
-      <div className="flex items-center gap-1 border-b border-base-300 bg-base-100 px-2 py-1 text-xs">
-        <span className={cx("status", status === "connected" ? "status-success" : status === "connecting" ? "status-info animate-pulse" : "status-error")} />
-        <span className="text-base-content/60">{status}</span>
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-100 px-2 py-1 text-xs">
+        <span className={cx("status shrink-0", status === "connected" ? "status-success" : status === "connecting" ? "status-info animate-pulse" : "status-error")} />
+        <span className="hidden text-base-content/60 sm:inline">{status}</span>
         <div className="flex-1" />
         <button className={cx("btn btn-ghost btn-xs", viewOnly && "btn-active")} onClick={() => setViewOnly((v) => !v)} title="Watch only: input is not sent (follow an agent without interfering)">
           {viewOnly ? <Eye className="size-3.5" /> : <MousePointer2 className="size-3.5" />}
-          {viewOnly ? "Watching" : "Control"}
+          <span className="hidden sm:inline">{viewOnly ? "Watching" : "Control"}</span>
         </button>
         <div className="dropdown dropdown-end">
           <div tabIndex={0} role="button" className="btn btn-ghost btn-xs" title="Scaling">
-            <Scaling className="size-3.5" /> {scale === "remote" ? "Resize remote" : scale === "fit" ? "Fit" : "1:1"}
+            <Scaling className="size-3.5" /> <span className="hidden sm:inline">{scale === "remote" ? "Resize remote" : scale === "fit" ? "Fit" : "1:1"}</span>
           </div>
           <ul tabIndex={0} className="dropdown-content menu z-30 w-56 rounded-box bg-base-100 p-2 shadow-lg">
             <li>
