@@ -42,12 +42,15 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-base-200 p-4">
-      <div className="card w-full max-w-sm bg-base-100 shadow-xl">
-        <div className="card-body gap-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-base-200 bg-[radial-gradient(ellipse_at_top,color-mix(in_oklab,var(--color-primary)_14%,transparent),transparent_60%)] p-4">
+      <div className="card w-full max-w-sm border border-base-300 bg-base-100 shadow-lg">
+        <div className="card-body gap-4 p-7">
           <div className="flex flex-col items-center gap-2 pb-2">
-            <Boxes className="size-10 text-primary" />
+            <div className="rounded-box bg-primary/10 p-3">
+              <Boxes className="size-8 text-primary" />
+            </div>
             <h1 className="text-xl font-semibold">Sign in to devenv</h1>
+            <p className="text-center text-sm text-base-content/60">Development environments on Kubernetes</p>
           </div>
           {error ? <ErrorAlert error={typeof error === "string" ? new Error(error) : error} /> : null}
           {providers.map((p) => (
@@ -76,7 +79,7 @@ export function LoginPage() {
                   autoFocus
                 />
               </Field>
-              <button className="btn btn-neutral mt-3 w-full" disabled={busy || !password}>
+              <button className={providers.length > 0 ? "btn btn-neutral mt-3 w-full" : "btn btn-primary mt-3 w-full"} disabled={busy}>
                 {busy && <Spinner className="loading-xs" />} Sign in
               </button>
             </form>
@@ -86,6 +89,7 @@ export function LoginPage() {
           )}
         </div>
       </div>
+      {info.data?.version && <div className="text-xs text-base-content/40">devenv {info.data.version}</div>}
     </div>
   );
 }

@@ -50,7 +50,7 @@ export function ProfilePage() {
           <Field label="Display name">
             <div className="flex gap-2">
               <input className="input w-full max-w-sm" value={name} onChange={(e) => setName(e.target.value)} />
-              <button className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              <button className="btn btn-primary" disabled={save.isPending || name === (me.data.displayName ?? "")} onClick={() => save.mutate()}>
                 Save
               </button>
             </div>

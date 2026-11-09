@@ -75,7 +75,7 @@ function EditUser({ user, onDone }: { user: User; onDone: () => void }) {
           </select>
         </Field>
         <Field label="Status">
-          <label className="label gap-2">
+          <label className="label cursor-pointer gap-2 text-sm text-base-content">
             <input type="checkbox" className="toggle toggle-error toggle-sm" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} disabled={user.local} />
             Disabled (sign-in, tokens and SSH keys rejected)
           </label>
@@ -116,7 +116,7 @@ function EditUser({ user, onDone }: { user: User; onDone: () => void }) {
       </div>
       <Confirm open={del} onClose={() => setDel(false)} title={`Delete ${user.name}?`} danger confirmLabel="Delete" typeToConfirm={user.name} busy={remove.isPending} onConfirm={() => remove.mutate()}>
         <p>The user and their access tokens are deleted.</p>
-        <label className="label gap-2">
+        <label className="label cursor-pointer gap-2 text-sm text-base-content">
           <input type="checkbox" className="checkbox checkbox-sm checkbox-error" checked={purge} onChange={(e) => setPurge(e.target.checked)} />
           Also delete their environments and personal images
         </label>

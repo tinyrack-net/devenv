@@ -221,8 +221,10 @@ function Workspace({ env }: { env: Environment }) {
             <div
               key={t.key}
               className={cx(
-                "group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-field px-3 py-1.5 text-sm select-none",
-                pane.active === t.key ? "bg-base-100 font-medium" : "text-base-content/60 hover:text-base-content",
+                "group relative flex shrink-0 cursor-pointer items-center gap-1.5 px-3 py-2 text-sm select-none",
+                pane.active === t.key
+                  ? "bg-base-100 font-medium after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-primary"
+                  : "text-base-content/60 hover:bg-base-100/50 hover:text-base-content",
               )}
               onClick={() => update((l) => activate(l, t.key))}
               onDoubleClick={() => {
@@ -489,13 +491,14 @@ function Workspace({ env }: { env: Environment }) {
           <Search className="size-4" /> <kbd className="kbd kbd-xs">⌘K</kbd>
         </button>
         {layout.panes.length > 1 && (
-          <button className="btn btn-ghost btn-sm btn-square" title="Toggle split direction" onClick={() => setLayout((l) => ({ ...l, split: l.split === "horizontal" ? "vertical" : "horizontal" }))}>
+          <button className="btn btn-ghost btn-sm btn-square" title="Toggle split direction" aria-label="Toggle split direction" onClick={() => setLayout((l) => ({ ...l, split: l.split === "horizontal" ? "vertical" : "horizontal" }))}>
             {layout.split === "horizontal" ? <Rows2 className="size-4" /> : <Columns2 className="size-4" />}
           </button>
         )}
         <button
           className="btn btn-ghost btn-sm btn-square"
           title="Split: open a terminal in a second pane"
+          aria-label="Split"
           onClick={() => {
             if (layout.panes.length > 1) return;
             update((l) => ({ ...l, panes: [...l.panes, { tabs: [] }], focused: 1 }));

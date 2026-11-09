@@ -216,18 +216,43 @@ export function StatusPanel({ env, ready }: { env: Environment; ready: boolean }
           </div>
         </div>
       )}
-      <div>
-        <div className="mb-1 text-xs font-medium text-base-content/60">Events</div>
-        <ul className="space-y-1">
-          {events.data?.length === 0 && <li className="text-xs text-base-content/50">No recent events.</li>}
-          {events.data?.slice(0, 30).map((e, i) => (
-            <li key={i} className={cx("text-xs", e.type === "Warning" && "text-warning")}>
-              <span className="text-base-content/50">{timeAgo(e.time)}</span> <span className="font-medium">{e.reason}</span> {e.message}
-              {e.count > 1 && <span className="text-base-content/50"> ×{e.count}</span>}
-            </li>
-          ))}
-        </ul>
+      <EventList events={events.data ?? []} />
+    </div>
+  );
+}
+
+function EventList({ events }: { events: { type: string; reason: string; message: string; count: number; time: string }[] }) {
+  const [all, setAll] = useState(false);
+  // Warnings first-class; routine events (pulled, created, scheduled) are noise.
+  const routine = /^(Pulled|Created|Started|Scheduled|AddedInterface|SuccessfulAttachVolume|Killing|Restarting)$/;
+  // sshd needs a moment after the container starts; a refused readiness
+  // probe at that point is expected.
+  const startupProbe = (e: { reason: string; message: string }) => e.reason === "Unhealthy" && /connection refused/.test(e.message) && /^Readiness/.test(e.message);
+  const shown = all ? events : events.filter((e) => (e.type === "Warning" && !startupProbe(e)) || (!routine.test(e.reason) && !startupProbe(e))).slice(0, 15);
+  const hidden = events.length - shown.length;
+  return (
+    <div>
+      <div className="mb-2 flex items-center text-xs font-medium text-base-content/60">
+        Events
+        {events.length > 0 && (
+          <button className="btn btn-ghost btn-xs ml-auto font-normal" onClick={() => setAll((a) => !a)}>
+            {all ? "Hide routine" : hidden > 0 ? `Show all (${events.length})` : ""}
+          </button>
+        )}
       </div>
+      {shown.length === 0 && <div className="text-xs text-base-content/50">{events.length ? "Only routine events." : "No recent events."}</div>}
+      <ul className="space-y-1.5">
+        {shown.map((e, i) => (
+          <li key={i} className={cx("rounded-field px-2 py-1.5 text-xs", e.type === "Warning" ? "bg-warning/10" : "bg-base-200/60")}>
+            <div className="flex items-center gap-2">
+              <span className={cx("font-medium", e.type === "Warning" && "text-warning")}>{e.reason}</span>
+              {e.count > 1 && <span className="text-base-content/50">×{e.count}</span>}
+              <span className="ml-auto shrink-0 text-base-content/50">{timeAgo(e.time)}</span>
+            </div>
+            <div className="mt-0.5 break-words text-base-content/70">{e.message}</div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

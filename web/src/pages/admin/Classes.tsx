@@ -51,7 +51,7 @@ export function AdminClassesPage() {
       {classes.isLoading && <Loading />}
       <div className="grid gap-4 md:grid-cols-2">
         {classes.data?.map((c) => (
-          <button key={c.name} className="card border border-base-300 bg-base-100 text-left hover:shadow-md" onClick={() => setSel(c)}>
+          <button key={c.name} className="card border border-base-300 bg-base-100 text-left transition hover:border-primary/40 hover:shadow-sm" onClick={() => setSel(c)}>
             <div className="card-body gap-2 p-5">
               <div className="flex items-center gap-2 text-lg font-semibold">
                 {c.name}
@@ -63,7 +63,9 @@ export function AdminClassesPage() {
                 {c.storageClass && <span className="badge badge-sm">{c.storageClass}</span>}
               </div>
               <div className="text-sm text-base-content/70">
-                Max {c.limits.cpu ? formatCPU(c.limits.cpu) : "∞"} · {c.limits.memory ? formatBytes(c.limits.memory) : "∞"} memory · {c.limits.disk ? formatBytes(c.limits.disk) : "∞"} disk
+                {c.limits.cpu || c.limits.memory || c.limits.disk
+                  ? `Up to ${[c.limits.cpu && formatCPU(c.limits.cpu), c.limits.memory && `${formatBytes(c.limits.memory)} memory`, c.limits.disk && `${formatBytes(c.limits.disk)} disk`].filter(Boolean).join(" · ")} per environment`
+                  : "No per-environment limits"}
               </div>
               <div className="text-xs text-base-content/50">
                 {c.access.groups.length + c.access.users.length === 0 ? "Everyone" : `Only ${[...c.access.groups.map((g) => `@${g}`), ...c.access.users].join(", ")}`}

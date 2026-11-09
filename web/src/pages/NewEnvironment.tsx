@@ -156,8 +156,7 @@ export function NewEnvironmentPage() {
               <select className="select w-full" value={cls} onChange={(e) => setCls(e.target.value)}>
                 {classes.data?.map((c) => (
                   <option key={c.name} value={c.name}>
-                    {c.name}
-                    {c.default ? " (default)" : ""}
+                    {c.name} · {networkLabel[c.networkMode] ?? c.networkMode}
                   </option>
                 ))}
               </select>

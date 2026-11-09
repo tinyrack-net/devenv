@@ -4,7 +4,7 @@ import { AlertTriangle, Ticket, Trash2 } from "lucide-react";
 import { api, type CreatedToken, type Token } from "../../lib/api";
 import { useInfo } from "../../lib/prefs";
 import { PageHeader } from "../../components/Layout";
-import { Confirm, CopyField, Empty, ErrorAlert, Field, Loading, Modal, Spinner, formatTime, timeAgo } from "../../components/ui";
+import { Confirm, CopyField, Empty, ErrorAlert, Field, Loading, Modal, Spinner, formatTime, timeAgo, timeUntil } from "../../components/ui";
 
 export function TokenTable({ tokens, onRevoke, showUser }: { tokens: Token[]; onRevoke: (t: Token) => void; showUser?: boolean }) {
   return (
@@ -41,8 +41,17 @@ export function TokenTable({ tokens, onRevoke, showUser }: { tokens: Token[]; on
                   </div>
                 </td>
                 <td data-label="Created" className="text-sm">{timeAgo(t.createdAt)}</td>
-                <td data-label="Expires" className="text-sm">{t.expiresAt ? <span className={expired ? "text-error" : ""}>{formatTime(t.expiresAt)}</span> : "never"}</td>
-                <td data-label="Last used" className="text-sm">{t.lastUsedAt ? timeAgo(t.lastUsedAt) : "never"}</td>
+                <td data-label="Expires" className="text-sm">
+                  {t.expiresAt ? (
+                    <span className={expired ? "text-error" : ""} title={formatTime(t.expiresAt)}>
+                      {expired ? "expired " : "in "}
+                      {timeUntil(t.expiresAt)}
+                    </span>
+                  ) : (
+                    <span className="text-base-content/60">never</span>
+                  )}
+                </td>
+                <td data-label="Last used" className="text-sm">{t.lastUsedAt ? timeAgo(t.lastUsedAt) : <span className="text-base-content/60">never</span>}</td>
                 <td className="text-right max-md:-mt-8 max-md:text-right">
                   <button className="btn btn-ghost btn-sm text-error" onClick={() => onRevoke(t)}>
                     <Trash2 className="size-4" />
@@ -141,10 +150,10 @@ export function TokensPage() {
           <input className="input w-full" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </Field>
         <Field label="Scopes">
-          <label className="label gap-2">
+          <label className="label cursor-pointer gap-2 text-sm text-base-content">
             <input type="checkbox" className="checkbox checkbox-sm" checked={scopes.includes("mcp")} onChange={() => toggle("mcp")} /> mcp: AI agents through /mcp
           </label>
-          <label className="label gap-2">
+          <label className="label cursor-pointer gap-2 text-sm text-base-content">
             <input type="checkbox" className="checkbox checkbox-sm" checked={scopes.includes("api")} onChange={() => toggle("api")} /> api: REST API (/api/v1)
           </label>
         </Field>

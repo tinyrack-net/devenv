@@ -6,20 +6,22 @@ export function cx(...c: (string | false | null | undefined)[]): string {
   return c.filter(Boolean).join(" ");
 }
 
-const phaseClass: Record<string, string> = {
-  Running: "badge-success",
-  Starting: "badge-info",
-  Pending: "badge-info",
-  Stopping: "badge-warning",
-  Stopped: "badge-ghost",
-  Failed: "badge-error",
+const phaseClass: Record<string, [string, string]> = {
+  Running: ["badge-success", "status-success"],
+  Starting: ["badge-info", "status-info"],
+  Pending: ["badge-info", "status-info"],
+  Stopping: ["badge-warning", "status-warning"],
+  Stopped: ["", "status-neutral"],
+  Failed: ["badge-error", "status-error"],
 };
 
+/** Soft pill with a status dot (spinner while changing). */
 export function PhaseBadge({ phase, deleting, size = "sm" }: { phase: string; deleting?: boolean; size?: "xs" | "sm" | "md" }) {
   const label = deleting ? "Deleting" : phase;
+  const [badge, dot] = deleting ? ["badge-warning", "status-warning"] : phaseClass[phase] ?? ["", "status-neutral"];
   return (
-    <span className={cx("badge gap-1 whitespace-nowrap", `badge-${size}`, deleting ? "badge-warning" : phaseClass[phase] ?? "badge-ghost")}>
-      {isTransitional(phase, deleting) && <Loader2 className="size-3 animate-spin" />}
+    <span className={cx("badge badge-soft gap-1.5 font-medium whitespace-nowrap", `badge-${size}`, badge)}>
+      {isTransitional(phase, deleting) ? <Loader2 className="size-3 animate-spin" /> : <span className={cx("status", dot)} />}
       {label}
     </span>
   );
@@ -110,6 +112,14 @@ export function timeAgo(iso?: string | null): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+/** "3d", "5h" until a time (or since it, for past times). */
+export function timeUntil(iso: string): string {
+  const s = Math.abs(new Date(iso).getTime() - Date.now()) / 1000;
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
 }
 
 export function formatTime(iso?: string | null): string {

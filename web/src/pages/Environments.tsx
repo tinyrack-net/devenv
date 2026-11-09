@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Bot, LayoutGrid, List, Monitor, Plus, Search, Server, Share2, SquareTerminal } from "lucide-react";
@@ -52,62 +52,66 @@ function OwnerBadges({ env, me }: { env: Environment; me?: string }) {
   );
 }
 
+function Spec({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] tracking-wide text-base-content/50 uppercase">{label}</div>
+      <div className="truncate text-sm">{children}</div>
+    </div>
+  );
+}
+
 function EnvCard({ env, me }: { env: Environment; me?: string }) {
   const info = useInfo();
   const navigate = useNavigate();
   const ssh = sshTargets(env, info.data)[0];
   const ready = env.phase === "Running" && !env.deleting;
   return (
-    <div className="card min-w-0 border border-base-300 bg-base-100 transition-shadow hover:shadow-md">
-      <div className="card-body gap-3 p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <Link to={`/env/${env.name}`} className="link-hover block truncate text-lg font-semibold">
-              {env.name}
-            </Link>
-            <div className="truncate text-sm text-base-content/60">
+    <div className="card min-w-0 border border-base-300 bg-base-100 transition hover:border-primary/40 hover:shadow-sm">
+      <div className="card-body gap-4 p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className={cx("rounded-field p-2", env.desktop ? "bg-secondary/10 text-secondary" : "bg-primary/10 text-primary")}>
+            {env.desktop ? <Monitor className="size-5" /> : <SquareTerminal className="size-5" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <Link to={`/env/${env.name}`} className="truncate text-base font-semibold hover:text-primary">
+                {env.name}
+              </Link>
+              <PhaseBadge phase={env.phase} deleting={env.deleting} size="xs" />
+            </div>
+            <div className="truncate text-xs text-base-content/60">
               {env.image} · {env.class}
+              {env.networkMode && env.networkMode !== "gateway" ? ` · ${env.networkMode}` : ""}
             </div>
           </div>
-          <div className="flex items-center gap-1">
-            <PhaseBadge phase={env.phase} deleting={env.deleting} />
-            <EnvMenu env={env} />
-          </div>
+          <EnvMenu env={env} />
         </div>
         <OwnerBadges env={env} me={me} />
-        <div className="grid grid-cols-3 gap-2 text-xs text-base-content/70">
-          <div>
-            <div className="text-base-content/50">CPU</div>
-            {env.resources.cpu ?? "default"}
-          </div>
-          <div>
-            <div className="text-base-content/50">Memory</div>
-            {env.resources.memory ? formatBytes(env.resources.memory) : "default"}
-          </div>
-          <div>
-            <div className="text-base-content/50">{env.ip ? "IP" : "Created"}</div>
-            {env.ip ?? timeAgo(env.createdAt)}
-          </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Spec label="CPU">{env.resources.cpu ?? "default"}</Spec>
+          <Spec label="Memory">{env.resources.memory ? formatBytes(env.resources.memory) : "default"}</Spec>
+          <Spec label={env.ip ? "Address" : "Created"}>{env.ip ?? timeAgo(env.createdAt)}</Spec>
         </div>
         {env.message && env.phase !== "Running" && <div className="text-xs text-base-content/60 line-clamp-2">{env.message}</div>}
         {ssh && (
-          <div className="flex items-center gap-1 rounded-field bg-base-200 px-2 py-1">
-            <code className="font-mono-tight flex-1 truncate">{sshCommand(ssh)}</code>
+          <div className="flex items-center gap-1 rounded-field border border-base-300 bg-base-200/60 py-0.5 pr-0.5 pl-2.5">
+            <code className="font-mono-tight flex-1 truncate text-base-content/80">{sshCommand(ssh)}</code>
             <CopyButton text={sshCommand(ssh)} />
           </div>
         )}
-        <div className="card-actions flex-nowrap items-center justify-between pt-1">
+        <div className="card-actions flex-nowrap items-center justify-between">
           <PowerButton env={env} />
           <div className="flex gap-1">
-            <button className="btn btn-sm btn-ghost" disabled={!ready} onClick={() => navigate(`/env/${env.name}?open=terminal`)} title="Terminal">
+            <button className="btn btn-sm btn-ghost btn-square" disabled={!ready} onClick={() => navigate(`/env/${env.name}?open=terminal`)} title="New terminal" aria-label="New terminal">
               <SquareTerminal className="size-4" />
             </button>
             {env.desktop && (
-              <button className="btn btn-sm btn-ghost" disabled={!ready} onClick={() => navigate(`/env/${env.name}?open=desktop`)} title="Desktop">
+              <button className="btn btn-sm btn-ghost btn-square" disabled={!ready} onClick={() => navigate(`/env/${env.name}?open=desktop`)} title="Desktop" aria-label="Desktop">
                 <Monitor className="size-4" />
               </button>
             )}
-            <Link to={`/env/${env.name}`} className="btn btn-sm btn-primary btn-soft">
+            <Link to={`/env/${env.name}`} className="btn btn-sm btn-primary">
               Open
             </Link>
           </div>
@@ -208,17 +212,25 @@ export function EnvironmentsPage() {
 
   const counts = useMemo(() => {
     const d = envs.data ?? [];
-    return { running: d.filter((e) => e.phase === "Running").length, total: d.length };
-  }, [envs.data]);
+    const name = me.data?.name;
+    return {
+      total: d.length,
+      all: d.length,
+      mine: d.filter((e) => e.owner === name).length,
+      shared: d.filter((e) => e.owner !== name).length,
+      agent: d.filter((e) => e.createdBy === "mcp").length,
+      running: d.filter((e) => e.running).length,
+    } as Record<Filter | "total", number>;
+  }, [envs.data, me.data]);
 
   return (
     <>
       <PageHeader
         title="Environments"
-        subtitle={envs.data ? `${counts.running} running of ${counts.total}` : undefined}
+        subtitle={envs.data ? (counts.total === 0 ? "None yet" : `${counts.total} total · ${counts.running} running`) : undefined}
         actions={
-          <Link to="/new" className="btn btn-primary btn-sm">
-            <Plus className="size-4" /> New environment
+          <Link to="/new" className="btn btn-primary btn-sm lg:hidden">
+            <Plus className="size-4" /> New
           </Link>
         }
       />
@@ -229,10 +241,11 @@ export function EnvironmentsPage() {
           <input placeholder="Filter" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         <div className="order-last -mx-3 w-[calc(100%+1.5rem)] overflow-x-auto px-3 sm:order-none sm:mx-0 sm:w-auto sm:px-0">
-          <div className="join">
+          <div role="tablist" className="tabs tabs-box tabs-sm w-max flex-nowrap bg-base-100">
             {(["all", "mine", "shared", "agent", "running"] as Filter[]).map((f) => (
-              <button key={f} className={cx("btn btn-sm join-item whitespace-nowrap capitalize", filter === f && "btn-active")} onClick={() => setFilter(f)}>
-                {f === "shared" ? "Shared with me" : f === "agent" ? "By agents" : f}
+              <button key={f} role="tab" className={cx("tab gap-1.5 whitespace-nowrap", filter === f && "tab-active")} onClick={() => setFilter(f)}>
+                {{ all: "All", mine: "Mine", shared: "Shared with me", agent: "By agents", running: "Running" }[f]}
+                <span className="text-xs opacity-60">{counts[f]}</span>
               </button>
             ))}
           </div>

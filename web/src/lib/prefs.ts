@@ -51,14 +51,14 @@ function set(p: Prefs) {
 
 export function applyTheme(t: Theme) {
   const dark = t === "dark" || (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  document.documentElement.dataset.theme = dark ? "devenv-dark" : "devenv-light";
 }
 
 applyTheme(current.theme);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(current.theme));
 
 export function isDark(): boolean {
-  return document.documentElement.dataset.theme === "dark";
+  return document.documentElement.dataset.theme === "devenv-dark";
 }
 
 export function usePrefs(): [Prefs, (patch: Partial<Prefs>) => void] {

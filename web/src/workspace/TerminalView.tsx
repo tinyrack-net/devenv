@@ -12,7 +12,7 @@ import { useIsTouch } from "../lib/media";
 import { cx } from "../components/ui";
 
 const darkTheme: ITheme = {
-  background: "#16181d",
+  background: "#181a21",
   foreground: "#d7dae0",
   cursor: "#d7dae0",
   selectionBackground: "#3e4452",
@@ -34,7 +34,7 @@ const darkTheme: ITheme = {
   brightWhite: "#ffffff",
 };
 const lightTheme: ITheme = {
-  background: "#fafafa",
+  background: "#ffffff",
   foreground: "#383a42",
   cursor: "#383a42",
   selectionBackground: "#d0d4dc",

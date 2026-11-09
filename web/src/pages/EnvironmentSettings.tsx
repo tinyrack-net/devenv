@@ -11,6 +11,21 @@ import { Confirm, ErrorAlert, Field, Loading, PhaseBadge, Spinner } from "../com
 import { useToast } from "../components/toast";
 import { useEnvMutations } from "../components/EnvActions";
 
+/** Save and reset buttons that only appear once something changed. */
+function SaveBar({ dirty, busy, label, onSave, onReset }: { dirty: boolean; busy: boolean; label: string; onSave: () => void; onReset: () => void }) {
+  if (!dirty && !busy) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <button className="btn btn-primary btn-sm" disabled={busy} onClick={onSave}>
+        {busy && <Spinner className="loading-xs" />} {label}
+      </button>
+      <button className="btn btn-ghost btn-sm" disabled={busy} onClick={onReset}>
+        Reset
+      </button>
+    </div>
+  );
+}
+
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
     <section className="grid min-w-0 gap-3 rounded-box bg-base-100 p-4 sm:p-5 md:grid-cols-[14rem_1fr] md:gap-4">
@@ -75,6 +90,7 @@ function Settings({ env }: { env: Environment }) {
   }, [env.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const spec = useUpdate(env);
+  const specDirty = image !== env.image || (res.cpu ?? "") !== (env.resources.cpu ?? "") || (res.memory ?? "") !== (env.resources.memory ?? "") || (res.disk ?? "") !== (env.resources.disk ?? "");
   const move = useUpdate(env);
   const sameStorage = (name: string) => {
     const c = classes.data?.find((x) => x.name === name);
@@ -119,13 +135,7 @@ function Settings({ env }: { env: Environment }) {
             )}
             <ErrorAlert error={spec.error} />
             {manage && (
-              <button
-                className="btn btn-primary btn-sm"
-                disabled={spec.isPending}
-                onClick={() => spec.mutate({ image: image !== env.image ? image : undefined, resources: res })}
-              >
-                {spec.isPending && <Spinner className="loading-xs" />} Save and apply
-              </button>
+              <SaveBar dirty={specDirty} busy={spec.isPending} label="Save and restart" onReset={() => { setRes(env.resources); setImage(env.image); }} onSave={() => spec.mutate({ image: image !== env.image ? image : undefined, resources: res })} />
             )}
           </fieldset>
         </Section>
@@ -145,9 +155,7 @@ function Settings({ env }: { env: Environment }) {
             {cls !== env.class && <div className="text-sm text-warning">The address changes{env.ip ? ` (now ${env.ip})` : ""}; SSH host keys stay the same.</div>}
             <ErrorAlert error={move.error} />
             {manage && (
-              <button className="btn btn-primary btn-sm" disabled={cls === env.class || move.isPending} onClick={() => move.mutate({ class: cls })}>
-                {move.isPending && <Spinner className="loading-xs" />} Move and restart
-              </button>
+              <SaveBar dirty={cls !== env.class} busy={move.isPending} label="Move and restart" onReset={() => setCls(env.class)} onSave={() => move.mutate({ class: cls })} />
             )}
           </fieldset>
         </Section>
@@ -157,9 +165,7 @@ function Settings({ env }: { env: Environment }) {
             <SharingInput value={sharing} onChange={setSharing} />
             <ErrorAlert error={share.error} />
             {manage && (
-              <button className="btn btn-primary btn-sm" disabled={share.isPending} onClick={() => share.mutate({ sharing })}>
-                Save sharing
-              </button>
+              <SaveBar dirty={JSON.stringify(sharing) !== JSON.stringify(env.sharing)} busy={share.isPending} label="Save sharing" onReset={() => setSharing(env.sharing)} onSave={() => share.mutate({ sharing })} />
             )}
           </fieldset>
         </Section>
@@ -174,21 +180,16 @@ function Settings({ env }: { env: Environment }) {
             </Field>
             <ErrorAlert error={access.error} />
             {manage && (
-              <div className="flex gap-2">
-                <button
-                  className="btn btn-primary btn-sm"
-                  disabled={access.isPending}
-                  onClick={() =>
-                    access.mutate(
-                      { sshAuthorizedKeys: keys.split("\n").filter((l) => l.trim()), password: password || undefined },
-                      { onSuccess: () => setPassword("") },
-                    )
-                  }
-                >
-                  Save access
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <SaveBar
+                  dirty={keys !== env.sshAuthorizedKeys.join("\n") || password !== ""}
+                  busy={access.isPending}
+                  label="Save access"
+                  onReset={() => { setKeys(env.sshAuthorizedKeys.join("\n")); setPassword(""); }}
+                  onSave={() => access.mutate({ sshAuthorizedKeys: keys.split("\n").filter((l) => l.trim()), password: password || undefined }, { onSuccess: () => setPassword("") })}
+                />
                 {env.passwordSet && (
-                  <button className="btn btn-ghost btn-sm" onClick={() => access.mutate({ password: "" })}>
+                  <button className="btn btn-ghost btn-sm text-error" onClick={() => access.mutate({ password: "" })}>
                     Remove password
                   </button>
                 )}
@@ -203,9 +204,7 @@ function Settings({ env }: { env: Environment }) {
               <PortsInput value={ports} onChange={setPorts} />
               <ErrorAlert error={net.error} />
               {manage && (
-                <button className="btn btn-primary btn-sm" onClick={() => net.mutate({ ports: ports.filter((p) => p.port > 0) })}>
-                  Save ports
-                </button>
+                <SaveBar dirty={JSON.stringify(ports) !== JSON.stringify(env.ports)} busy={net.isPending} label="Save ports" onReset={() => setPorts(env.ports)} onSave={() => net.mutate({ ports: ports.filter((p) => p.port > 0) })} />
               )}
             </fieldset>
           </Section>

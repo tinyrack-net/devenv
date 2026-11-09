@@ -61,19 +61,19 @@ function ImageForm({ initial, editing, onDone }: { initial: ImageInput; editing?
         </Field>
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-2 pt-3">
-        <label className="label gap-2">
+        <label className="label cursor-pointer gap-2 text-sm text-base-content">
           <input type="checkbox" className="checkbox checkbox-sm" checked={v.desktop} onChange={(e) => set({ desktop: e.target.checked })} /> Provides a desktop (VNC)
         </label>
-        <label className="label gap-2">
+        <label className="label cursor-pointer gap-2 text-sm text-base-content">
           <input type="checkbox" className="checkbox checkbox-sm" checked={v.disabled} onChange={(e) => set({ disabled: e.target.checked })} /> Disabled for new environments
         </label>
         {admin && (
-          <label className="label gap-2">
+          <label className="label cursor-pointer gap-2 text-sm text-base-content">
             <input type="checkbox" className="checkbox checkbox-sm" checked={!!v.prepull} onChange={(e) => set({ prepull: e.target.checked })} /> Prepull on every node
           </label>
         )}
         {admin && !editing && (
-          <label className="label gap-2">
+          <label className="label cursor-pointer gap-2 text-sm text-base-content">
             <input type="checkbox" className="checkbox checkbox-sm" checked={!!v.shared} onChange={(e) => set({ shared: e.target.checked })} /> Shared with everyone
           </label>
         )}
@@ -117,14 +117,18 @@ function ImageRow({ img, onEdit }: { img: Image; onEdit: () => void }) {
   return (
     <tr className={cx(img.disabled && "opacity-60")}>
       <td>
-        <div className="flex items-center gap-2 font-medium">
-          {img.desktop ? <Monitor className="size-4" /> : <SquareTerminal className="size-4" />}
-          {img.displayName || img.name}
+        <div className="flex items-center gap-3">
+          <div className={cx("rounded-field p-2", img.desktop ? "bg-secondary/10 text-secondary" : "bg-primary/10 text-primary")}>
+            {img.desktop ? <Monitor className="size-4" /> : <SquareTerminal className="size-4" />}
+          </div>
+          <div className="min-w-0">
+            <div className="font-medium">{img.displayName || img.name}</div>
+            <div className="text-xs text-base-content/50">{img.description || (img.desktop ? "Desktop (VNC)" : "Terminal")}</div>
+          </div>
         </div>
-        <div className="text-xs text-base-content/50">{img.description}</div>
       </td>
       <td data-label="Image">
-        <code className="font-mono-tight break-all">{img.image}</code>
+        <code className="font-mono-tight break-all text-base-content/80">{img.image}</code>
       </td>
       <td data-label="Scope">
         <div className="flex flex-wrap gap-1">
@@ -141,7 +145,7 @@ function ImageRow({ img, onEdit }: { img: Image; onEdit: () => void }) {
           {img.disabled && <span className="badge badge-soft badge-warning badge-sm">disabled</span>}
         </div>
       </td>
-      <td data-label="In use" className="text-sm">{img.inUse}</td>
+      <td data-label="In use" className="text-sm">{img.inUse > 0 ? `${img.inUse} env${img.inUse > 1 ? "s" : ""}` : <span className="text-base-content/50">unused</span>}</td>
       <td>
         {img.canManage && (
           <div className="flex justify-end gap-1">

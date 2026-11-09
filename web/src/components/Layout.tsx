@@ -185,7 +185,7 @@ export function Layout() {
               <Plus className="size-4" /> New environment
             </Link>
           </div>
-          <ul className="menu w-full flex-1 gap-0.5 px-3 py-4">
+          <ul className="nav-menu menu w-full flex-1 gap-0.5 px-3 py-4">
             <Item to="/" end icon={<LayoutGrid className="size-4" />}>
               Environments
             </Item>
