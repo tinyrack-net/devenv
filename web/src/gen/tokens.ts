@@ -5,16 +5,14 @@
 /*
 Package tokens implements personal access tokens for MCP and the API.
 
-A token is "dvn_<id>_<secret>". The server stores only a SHA-256 hash in a
-Secret named devenv-token-<id> in the server namespace, together with the
-owner, scopes and expiry. The plain token is shown once at creation.
+A token is "dvn_<id>_<secret>". The database stores only a SHA-256 hash
+with the owner, scopes and expiry. The plain token is shown once at
+creation.
 */
 
 export const Prefix = "dvn_";
 export const ScopeMCP = "mcp";
 export const ScopeAPI = "api";
-export const LabelComponent = "devenv.tinyrack.net/component";
-export const LabelUser = "devenv.tinyrack.net/user";
 /**
  * Token is the metadata of a token.
  */
@@ -28,10 +26,8 @@ export interface Token {
   lastUsedAt?: string;
 }
 /**
- * Store manages tokens. Client must be able to list Secrets in Namespace;
- * reads go through the cache when it is a cached client.
+ * Store manages tokens.
  */
 export interface Store {
-  Client: any /* client.Client */;
-  Namespace: string;
+  DB?: any /* store.Store */;
 }

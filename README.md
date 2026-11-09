@@ -9,7 +9,7 @@ Remote development environments on Kubernetes.
 - Works on any conformant cluster; dedicated IPs via Multus are optional
 - MCP endpoint so AI agents can create environments and code in them: commands, file
   read/edit/write, ripgrep search and background processes
-- Installs with a single Helm chart
+- Installs with a single Helm chart; state lives in SQLite (default) or PostgreSQL
 
 > Status: early development. See [docs/PLAN.md](docs/PLAN.md).
 
@@ -33,8 +33,7 @@ See [docs/images.md](docs/images.md) to build your own environment images and
 ## Development
 
 ```sh
-make generate manifests   # deepcopy + CRDs
-make test                 # unit + envtest
+make test                 # unit + envtest (DEVENV_TEST_POSTGRES=postgres://... adds PostgreSQL)
 make run                  # controller + API on :8080 against current kubeconfig (auth disabled)
 cd web && pnpm dev        # web console on :5173, proxies /api to :8080
 make build-all            # build web console and embed it into bin/devenv
@@ -43,5 +42,5 @@ make build-all            # build web console and embed it into bin/devenv
 ## Configuration
 
 See [docs/configuration.md](docs/configuration.md): login methods (local account, OIDC), users,
-sharing, limits and the configuration file. Backups and restores:
+sharing, limits, classes, images and the configuration file. Backups and restores:
 [docs/disaster-recovery.md](docs/disaster-recovery.md).

@@ -1,18 +1,22 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/access"
+	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
 
 // --- tokens (own) ---
@@ -94,17 +98,17 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) toUser(u *devenvv1.DevUser, withUsage bool, r *http.Request) User {
+func (s *Server) toUser(u *model.User, withUsage bool, r *http.Request) User {
 	role := string(u.Spec.Role)
 	if role == "" {
-		role = string(devenvv1.RoleUser)
+		role = string(model.RoleUser)
 	}
 	out := User{
 		Name: u.Name, DisplayName: u.Spec.DisplayName, Email: u.Spec.Email,
 		Role: role, Admin: s.Users.IsAdmin(u), Disabled: u.Spec.Disabled,
 		Identities: toIdentities(u.Spec.Identities), Groups: u.Status.Groups,
 		LastLoginProvider: u.Status.LastLoginProvider, SSHKeys: len(u.Spec.SSHKeys),
-		CreatedAt: u.CreationTimestamp.Time,
+		CreatedAt: u.CreatedAt,
 		Local:     u.Name == s.Config.Auth.Password.Username,
 		Limits: LimitsInput{
 			MaxEnvironments: u.Spec.Limits.MaxEnvironments, MaxRunning: u.Spec.Limits.MaxRunning,
@@ -115,7 +119,7 @@ func (s *Server) toUser(u *devenvv1.DevUser, withUsage bool, r *http.Request) Us
 		out.Groups = []string{}
 	}
 	if u.Status.LastLoginAt != nil {
-		t := u.Status.LastLoginAt.Time
+		t := *u.Status.LastLoginAt
 		out.LastLoginAt = &t
 	}
 	if withUsage {
@@ -126,8 +130,8 @@ func (s *Server) toUser(u *devenvv1.DevUser, withUsage bool, r *http.Request) Us
 	return out
 }
 
-func fromLimitsInput(in LimitsInput) (devenvv1.UserLimits, error) {
-	out := devenvv1.UserLimits{MaxEnvironments: in.MaxEnvironments, MaxRunning: in.MaxRunning}
+func fromLimitsInput(in LimitsInput) (model.UserLimits, error) {
+	out := model.UserLimits{MaxEnvironments: in.MaxEnvironments, MaxRunning: in.MaxRunning}
 	for _, n := range []*int32{in.MaxEnvironments, in.MaxRunning} {
 		if n != nil && *n < 0 {
 			return out, badRequest("limits must not be negative")
@@ -174,15 +178,15 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, badRequest("role must be admin or user"))
 		return
 	}
-	u := &devenvv1.DevUser{
-		ObjectMeta: metav1.ObjectMeta{Name: in.Name, Labels: map[string]string{"app.kubernetes.io/managed-by": "devenv"}},
-		Spec: devenvv1.DevUserSpec{
+	u := &model.User{
+		Name: in.Name,
+		Spec: model.UserSpec{
 			DisplayName: strings.TrimSpace(in.DisplayName), Email: strings.TrimSpace(in.Email),
-			Role: devenvv1.Role(in.Role),
+			Role: model.Role(in.Role),
 		},
 	}
 	if u.Spec.Role == "" {
-		u.Spec.Role = devenvv1.RoleUser
+		u.Spec.Role = model.RoleUser
 	}
 	if in.Limits != nil {
 		l, err := fromLimitsInput(*in.Limits)
@@ -192,7 +196,7 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		u.Spec.Limits = l
 	}
-	if err := s.Client.Create(r.Context(), u); err != nil {
+	if err := s.DB.CreateUser(r.Context(), u); err != nil {
 		fail(w, r, err)
 		return
 	}
@@ -225,7 +229,6 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	before := u.DeepCopy()
 	if in.DisplayName != nil {
 		u.Spec.DisplayName = strings.TrimSpace(*in.DisplayName)
 	}
@@ -245,7 +248,7 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 			fail(w, r, badRequest("the local account is always an administrator"))
 			return
 		}
-		u.Spec.Role = devenvv1.Role(*in.Role)
+		u.Spec.Role = model.Role(*in.Role)
 	}
 	if in.Disabled != nil {
 		if u.Name == p.Name && *in.Disabled {
@@ -263,17 +266,17 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		u.Spec.Limits = l
 	}
 	if in.Identities != nil {
-		ids := []devenvv1.Identity{}
+		ids := []model.Identity{}
 		for _, id := range *in.Identities {
 			if s.Config.Provider(id.Provider) == nil || id.Subject == "" {
 				fail(w, r, badRequest(fmt.Sprintf("unknown provider %q or empty subject", id.Provider)))
 				return
 			}
-			ids = append(ids, devenvv1.Identity{Provider: id.Provider, Subject: id.Subject})
+			ids = append(ids, model.Identity{Provider: id.Provider, Subject: id.Subject})
 		}
 		u.Spec.Identities = ids
 	}
-	if err := s.Client.Patch(r.Context(), u, client.MergeFrom(before)); err != nil {
+	if err := s.DB.UpdateUser(r.Context(), u); err != nil {
 		fail(w, r, err)
 		return
 	}
@@ -292,34 +295,33 @@ func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, badRequest("this user can not be deleted"))
 		return
 	}
-	u, err := s.Users.Get(r.Context(), name)
-	if err != nil {
+	if _, err := s.Users.Get(r.Context(), name); err != nil {
 		fail(w, r, err)
 		return
 	}
 	ctx := r.Context()
 	if r.URL.Query().Get("purge") != "" {
-		envs := &devenvv1.DevEnvironmentList{}
-		if err := s.Client.List(ctx, envs, client.InNamespace(s.Namespace)); err != nil {
+		envs, err := s.DB.ListEnvironments(ctx)
+		if err != nil {
 			fail(w, r, err)
 			return
 		}
-		for i := range envs.Items {
-			if envs.Items[i].Spec.Owner == name {
-				if err := s.DeleteEnvironment(ctx, p, envs.Items[i].Name); client.IgnoreNotFound(err) != nil {
+		for i := range envs {
+			if envs[i].Spec.Owner == name {
+				if err := s.DeleteEnvironment(ctx, p, envs[i].Name); err != nil && !errors.Is(err, store.ErrNotFound) {
 					fail(w, r, err)
 					return
 				}
 			}
 		}
-		imgs := &devenvv1.DevImageList{}
-		if err := s.Client.List(ctx, imgs); err != nil {
+		imgs, err := s.DB.ListImages(ctx)
+		if err != nil {
 			fail(w, r, err)
 			return
 		}
-		for i := range imgs.Items {
-			if imgs.Items[i].Spec.Owner == name {
-				_ = s.Client.Delete(ctx, &imgs.Items[i])
+		for i := range imgs {
+			if imgs[i].Spec.Owner == name {
+				_ = s.DB.DeleteImage(ctx, imgs[i].Name)
 			}
 		}
 	}
@@ -327,7 +329,7 @@ func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	if err := s.Client.Delete(ctx, u, client.Preconditions{UID: &u.UID}); err != nil {
+	if err := s.DB.DeleteUser(ctx, name); err != nil {
 		fail(w, r, err)
 		return
 	}
@@ -371,17 +373,16 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	out := System{Version: s.Version, Namespace: s.Namespace, Config: s.Config.Redacted(), SSH: s.SSH, Counts: map[string]int{}}
 	out.Helper = s.HelperImage
-	if c, err := s.Capacity.Report(ctx, &devenvv1.DevEnvironmentClassSpec{}, nil); err == nil {
+	if c, err := s.Capacity.Report(ctx, &model.ClassSpec{}, nil); err == nil {
 		out.Nodes = c.Nodes
 	}
 	if out.Nodes == nil {
 		out.Nodes = []capacityNode{}
 	}
-	envs := &devenvv1.DevEnvironmentList{}
-	if err := s.Client.List(ctx, envs, client.InNamespace(s.Namespace)); err == nil {
-		out.Counts["environments"] = len(envs.Items)
-		for _, e := range envs.Items {
-			if e.Status.Phase == devenvv1.PhaseRunning {
+	if envs, err := s.DB.ListEnvironments(ctx); err == nil {
+		out.Counts["environments"] = len(envs)
+		for _, e := range envs {
+			if e.Status.Phase == model.PhaseRunning {
 				out.Counts["running"]++
 			}
 		}
@@ -392,9 +393,80 @@ func (s *Server) adminSystem(w http.ResponseWriter, r *http.Request) {
 	if ts, err := s.Tokens.List(ctx, ""); err == nil {
 		out.Counts["tokens"] = len(ts)
 	}
-	imgs := &devenvv1.DevImageList{}
-	if err := s.Client.List(ctx, imgs); err == nil {
-		out.Counts["images"] = len(imgs.Items)
+	if imgs, err := s.Catalog.Images(ctx); err == nil {
+		out.Counts["images"] = len(imgs)
 	}
+	out.Database = s.Config.Database.Driver
 	writeJSON(w, http.StatusOK, out)
 }
+
+// adminOrphans lists Kubernetes objects of environments without a database
+// record (the database was restored to an earlier point). Nothing deletes
+// them automatically: the home volumes may hold the only copy of data.
+func (s *Server) adminOrphans(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
+	found, err := controller.Orphans(r.Context(), s.Reader, s.DB, s.Namespace)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	out := []Orphan{}
+	for name, objs := range found {
+		out = append(out, Orphan{Name: name, Objects: objs})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, out)
+}
+
+// adminDeleteOrphan deletes the objects of an environment that has no
+// database record, including its home volume.
+func (s *Server) adminDeleteOrphan(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	name := r.PathValue("name")
+	if _, err := s.DB.GetEnvironment(ctx, name); err == nil {
+		fail(w, r, badRequest("environment exists; delete it instead"))
+		return
+	}
+	if s.Client == nil {
+		fail(w, r, errors.New("no client"))
+		return
+	}
+	sel := []client.DeleteAllOfOption{client.InNamespace(s.Namespace), client.MatchingLabels{controller.LabelEnvironment: name, controller.LabelManagedBy: controller.ManagedByValue}}
+	for _, obj := range []client.Object{&corev1.Pod{}, &corev1.Secret{}, &corev1.PersistentVolumeClaim{}} {
+		if err := s.Client.DeleteAllOf(ctx, obj, sel...); err != nil {
+			fail(w, r, err)
+			return
+		}
+	}
+	// Services do not support DeleteAllOf.
+	svcs := &corev1.ServiceList{}
+	if err := s.Reader.List(ctx, svcs, client.InNamespace(s.Namespace), client.MatchingLabels{controller.LabelEnvironment: name, controller.LabelManagedBy: controller.ManagedByValue}); err == nil {
+		for i := range svcs.Items {
+			_ = s.Client.Delete(ctx, &svcs.Items[i])
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminResetVolume lets an environment waiting for a restored home volume
+// start with an empty one.
+func (s *Server) adminResetVolume(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
+	env, err := s.DB.MutateEnvironment(r.Context(), r.PathValue("name"), func(e *model.Environment) error {
+		e.VolumeCreated = false
+		return nil
+	})
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.view(env, access.Manage))
+}
+

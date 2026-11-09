@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/vnc"
 )
@@ -70,7 +70,7 @@ func (s *Server) withDesktop(ctx context.Context, name string, fn func(*vnc.Clie
 	if !env.Status.Desktop {
 		return errorf("environment %s has no desktop (image %s); create one with an image that has desktop true in list_images", name, env.Spec.ImageRef)
 	}
-	if env.Status.Phase != devenvv1.PhaseRunning {
+	if env.Status.Phase != model.PhaseRunning {
 		if _, err := s.API.SetRunning(ctx, who(ctx), name, true); err != nil {
 			return userErr(err)
 		}

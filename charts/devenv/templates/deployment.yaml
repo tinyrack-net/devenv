@@ -5,7 +5,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "devenv.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- $sqlite := eq .Values.database.driver "sqlite" }}
+  replicas: {{ if $sqlite }}1{{ else }}{{ .Values.replicaCount }}{{ end }}
+  {{- if $sqlite }}
+  # One writer for the SQLite file.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels: {{- include "devenv.selectorLabels" . | nindent 6 }}
   template:
@@ -27,6 +33,10 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -36,7 +46,7 @@ spec:
           args:
             - --config=/etc/devenv/devenv.yaml
             - --environment-namespace={{ .Values.environments.namespace }}
-            - --leader-elect={{ gt (int .Values.replicaCount) 1 }}
+            - --leader-elect={{ and (not $sqlite) (gt (int .Values.replicaCount) 1) }}
             - --zap-log-level={{ .Values.logLevel }}
             {{- range .Values.extraArgs }}
             - {{ . }}
@@ -85,6 +95,14 @@ spec:
               mountPath: /etc/devenv/devenv.yaml
               subPath: devenv.yaml
               readOnly: true
+            {{- if $sqlite }}
+            - name: data
+              mountPath: /var/lib/devenv
+            {{- else if .Values.database.postgres.existingSecret }}
+            - name: database
+              mountPath: /etc/devenv/secrets/database
+              readOnly: true
+            {{- end }}
             {{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
             - name: admin-password
               mountPath: /etc/devenv/secrets/admin
@@ -112,6 +130,16 @@ spec:
         - name: config
           configMap:
             name: {{ include "devenv.fullname" . }}-config
+        {{- if $sqlite }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.database.sqlite.existingClaim | default (printf "%s-data" (include "devenv.fullname" .)) }}
+        {{- else if .Values.database.postgres.existingSecret }}
+        - name: database
+          secret:
+            secretName: {{ .Values.database.postgres.existingSecret }}
+            items: [{key: {{ .Values.database.postgres.secretKey }}, path: url}]
+        {{- end }}
         {{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
         - name: admin-password
           secret:

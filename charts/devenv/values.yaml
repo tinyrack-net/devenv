@@ -9,7 +9,8 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# -- Replicas. Leader election is enabled automatically when > 1.
+# -- Replicas (postgres only; SQLite runs one). Leader election is enabled
+# automatically when > 1.
 replicaCount: 1
 
 environments:
@@ -68,34 +69,33 @@ users:
   #  disk: 200Gi
   adminLimits: null
 
-# -- Daily export of users, environments, images, class access lists and the
-# Secrets that must survive (server keys, environment host keys and
-# passwords, access tokens). Home volumes are backed up by the storage system:
-# add its selection labels to classes (spec.storage.labels). See
-# docs/disaster-recovery.md.
-backup:
-  enabled: false
-  schedule: "15 3 * * *"
-  # -- file:///path (inside the job pod, e.g. a mounted volume) or
-  # s3://bucket/prefix.
-  dest: ""
-  # -- Number of backups to keep.
-  keep: 14
-  s3:
-    # -- S3 endpoint, e.g. https://s3.example.com (empty: AWS).
-    endpoint: ""
-    region: ""
-    # -- Secret with the access key pair.
+# -- Where devenv keeps its state (users, environments, keys, tokens,
+# console created images). Back it up: together with the home volumes it is
+# everything needed to recover. See docs/disaster-recovery.md.
+database:
+  # -- sqlite (file on a PVC, single replica) or postgres.
+  driver: sqlite
+  sqlite:
+    size: 1Gi
+    storageClassName: ""
+    # -- Use an existing PVC instead of creating one.
+    existingClaim: ""
+    # -- Labels/annotations of the PVC, e.g. to select it for storage backups.
+    labels: {}
+    annotations: {}
+  postgres:
+    # -- Connection URL. Prefer existingSecret.
+    url: ""
+    # -- Secret holding the URL (CloudNativePG app secrets use key `uri`).
     existingSecret: ""
-    accessKeyIDKey: AWS_ACCESS_KEY_ID
-    secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+    secretKey: uri
 
 # -- Extra configuration merged into the generated devenv.yaml (see
 # docs/configuration.md). Values set here win.
 config: {}
 
-# -- Create a default DevEnvironmentClass. Every environment without an
-# explicit class uses the class named "default".
+# -- The default class. Every environment without an explicit class uses the
+# class named "default". Classes are part of the configuration file.
 defaultClass:
   create: true
   spec:
@@ -132,9 +132,10 @@ defaultImages:
     tag: ""
     prepull: true
 
-# -- Extra DevEnvironmentClass objects: name -> spec.
+# -- Extra classes: name -> spec.
 extraClasses: {}
-# -- Extra DevImage objects: name -> spec.
+# -- Extra catalog images: name -> spec. Users and admins can add more in the
+# console (stored in the database).
 extraImages: {}
 
 service:

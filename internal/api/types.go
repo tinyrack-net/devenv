@@ -32,6 +32,8 @@ type Image struct {
 	InUse     int         `json:"inUse"`
 	// CanManage reports whether the caller may edit the image.
 	CanManage bool `json:"canManage"`
+	// Managed images come from the deployment configuration (read-only).
+	Managed bool `json:"managed"`
 }
 
 // ResourcesInput uses strings so the frontend can send "2", "4Gi" etc.
@@ -71,6 +73,7 @@ type Environment struct {
 	Effective   ResourcesInput `json:"effective"`
 	Running     bool           `json:"running"`
 	Phase       string         `json:"phase"`
+	Reason      string         `json:"reason,omitempty"`
 	Message     string         `json:"message,omitempty"`
 	Desktop     bool           `json:"desktop"`
 	ImageRef    string         `json:"imageRef,omitempty"`
@@ -316,6 +319,15 @@ type System struct {
 	Helper    string                  `json:"helperImage,omitempty"`
 	Nodes     []capacity.NodeCapacity `json:"nodes"`
 	Counts    map[string]int          `json:"counts"`
+	// Database driver (sqlite, postgres).
+	Database string `json:"database"`
+}
+
+// Orphan lists Kubernetes objects of an environment without a database
+// record.
+type Orphan struct {
+	Name    string   `json:"name"`
+	Objects []string `json:"objects"`
 }
 
 type capacityNode = capacity.NodeCapacity

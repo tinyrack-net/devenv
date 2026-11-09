@@ -21,21 +21,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/catalog"
 	"github.com/tinyrack-net/devenv/internal/config"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/gateway"
 	"github.com/tinyrack-net/devenv/internal/keys"
 	"github.com/tinyrack-net/devenv/internal/mcpserver"
+	"github.com/tinyrack-net/devenv/internal/migrate"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/server"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/store"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
 	"github.com/tinyrack-net/devenv/web"
@@ -48,7 +50,6 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(devenvv1.AddToScheme(scheme))
 }
 
 func envOr(key, def string) string {
@@ -150,9 +151,6 @@ type flags struct {
 }
 
 func main() {
-	if runBackupCommand(os.Args[1:]) {
-		return
-	}
 	var f flags
 	flag.StringVar(&f.configFile, "config", envOr("DEVENV_CONFIG", ""), "Configuration file (YAML). See docs/configuration.md.")
 	flag.StringVar(&f.metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address. \"0\" disables it.")
@@ -170,7 +168,7 @@ func main() {
 	flag.StringVar(&f.adminUser, "admin-username", "admin", "Deprecated: auth.password.username.")
 	flag.BoolVar(&f.secureCookies, "secure-cookies", false, "Deprecated: auth.session.secureCookies.")
 	flag.StringVar(&f.serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server (key Secret, tokens). Defaults to the environment namespace.")
-	flag.StringVar(&f.keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding generated server keys.")
+	flag.StringVar(&f.keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding the server keys of 0.10 and earlier (imported once).")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -214,7 +212,33 @@ func main() {
 	if err != nil {
 		exit(err, "create client")
 	}
-	serverKeys, err := keys.Ensure(context.Background(), direct, serverNamespace, f.keysSecret)
+
+	dsn := cfg.Database.Path
+	if cfg.Database.Driver == "postgres" {
+		dsn = cfg.Database.URL
+	}
+	var db *store.Store
+	for attempt := 0; ; attempt++ {
+		db, err = store.Open(context.Background(), cfg.Database.Driver, dsn)
+		if err == nil {
+			break
+		}
+		if attempt >= 30 || strings.Contains(err.Error(), "newer than this server") {
+			exit(err, "open database")
+		}
+		log.Info("database not ready, retrying", "error", err.Error())
+		time.Sleep(5 * time.Second)
+	}
+	log.Info("database ready", "driver", cfg.Database.Driver, "schema", store.SchemaVersion)
+
+	// One-time import of the CRD based state of 0.10 and earlier.
+	if _, err := migrate.Run(context.Background(), direct, db, migrate.Options{
+		EnvironmentNamespace: envNamespace, ServerNamespace: serverNamespace, KeysSecret: f.keysSecret, Log: log.WithName("migrate"),
+	}); err != nil {
+		exit(err, "import previous state")
+	}
+
+	serverKeys, err := keys.Ensure(context.Background(), db)
 	if err != nil {
 		exit(err, "bootstrap server keys")
 	}
@@ -241,10 +265,13 @@ func main() {
 		exit(err, "create manager")
 	}
 
-	if err := (&controller.DevEnvironmentReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("devenv"),
+	cat := catalog.New(cfg, db)
+	if err := (&controller.EnvironmentReconciler{
+		Client:    mgr.GetClient(),
+		Recorder:  mgr.GetEventRecorder("devenv"),
+		DB:        db,
+		Catalog:   cat,
+		Namespace: envNamespace,
 
 		GatewayAuthorizedKey:  serverKeys.ClientAuthorizedKey(),
 		HelperImage:           f.helperImage,
@@ -253,43 +280,20 @@ func main() {
 		exit(err, "setup controller")
 	}
 
-	userStore := &users.Store{Client: mgr.GetClient(), Config: cfg}
-	// Tokens live in the server namespace, which the cache does not cover;
-	// read them directly (one GET per token request).
-	tokenStore := &tokens.Store{Client: direct, Namespace: serverNamespace}
+	userStore := &users.Store{DB: db, Config: cfg}
+	tokenStore := &tokens.Store{DB: db}
 
-	dialer := &sshclient.Dialer{Client: mgr.GetClient(), Namespace: envNamespace, Signer: serverKeys.ClientKey}
+	dialer := &sshclient.Dialer{DB: db, Namespace: envNamespace, Signer: serverKeys.ClientKey}
 	pool := &sshclient.Pool{Dialer: dialer}
 	if f.sshAddr != "" {
 		if err := mgr.Add(&gateway.Gateway{
 			Addr: f.sshAddr, HostKey: serverKeys.HostKey, Dialer: dialer,
-			Users: func(ctx context.Context) ([]devenvv1.DevUser, error) { return userStore.List(ctx) },
+			Users: func(ctx context.Context) ([]model.User, error) { return userStore.List(ctx) },
 		}); err != nil {
 			exit(err, "add ssh gateway")
 		}
 	}
 
-	// One-time data migration from single-user versions, after the cache
-	// starts (the user store reads through it).
-	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		if !mgr.GetCache().WaitForCacheSync(ctx) {
-			return nil
-		}
-		for attempt := 0; ; attempt++ {
-			err := userStore.Migrate(ctx, direct, envNamespace)
-			if err == nil {
-				return nil
-			}
-			log.Error(err, "migrate data (retrying)")
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(10 * time.Second):
-			}
-		}
-	})); err != nil {
-		exit(err, "add migration")
-	}
 
 	if f.httpAddr != "" {
 		sessions, err := auth.NewSessions(serverKeys.SessionKey, cfg.Auth.Session.SecureCookies)
@@ -308,11 +312,11 @@ func main() {
 		}
 		acts := &activity.Log{}
 		broker := &api.Broker{}
-		if err := broker.Watch(context.Background(), mgr.GetCache()); err != nil {
-			exit(err, "watch environments")
-		}
+		broker.Watch(context.Background(), db)
 		srv := &api.Server{
-			Client:      mgr.GetClient(),
+			DB:          db,
+			Catalog:     cat,
+			Client:      direct,
 			Reader:      direct,
 			Namespace:   envNamespace,
 			Config:      cfg,
@@ -354,7 +358,7 @@ func main() {
 	}
 
 	if f.helperImage != "" {
-		if err := (&controller.PrepullReconciler{Client: mgr.GetClient(), Namespace: serverNamespace, Image: f.helperImage}).SetupWithManager(mgr); err != nil {
+		if err := (&controller.PrepullReconciler{Client: mgr.GetClient(), Catalog: cat, Namespace: serverNamespace, Image: f.helperImage}).SetupWithManager(mgr); err != nil {
 			exit(err, "setup image prepull")
 		}
 	}
@@ -362,7 +366,7 @@ func main() {
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		exit(err, "add healthz")
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("readyz", func(r *http.Request) error { return db.Ping(r.Context()) }); err != nil {
 		exit(err, "add readyz")
 	}
 

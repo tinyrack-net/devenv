@@ -141,6 +141,7 @@ function ImageRow({ img, onEdit }: { img: Image; onEdit: () => void }) {
               <Users className="size-3" /> {restricted ? "restricted" : "shared"}
             </span>
           )}
+          {img.managed && <span className="badge badge-soft badge-sm" title="Defined in the deployment configuration">configured</span>}
           {img.prepull && <span className="badge badge-soft badge-sm">prepulled</span>}
           {img.disabled && <span className="badge badge-soft badge-warning badge-sm">disabled</span>}
         </div>

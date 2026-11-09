@@ -9,11 +9,9 @@ import (
 	"strings"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
@@ -83,8 +81,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		for _, id := range u.Spec.Identities {
 			out.Identities = append(out.Identities, IdentityInfo{Provider: id.Provider, Subject: id.Subject})
 		}
-		if u.Spec.Preferences != nil && len(u.Spec.Preferences.Raw) > 0 {
-			out.Preferences = u.Spec.Preferences.Raw
+		if len(u.Spec.Preferences) > 0 {
+			out.Preferences = u.Spec.Preferences
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -100,7 +98,6 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	before := u.DeepCopy()
 	if in.DisplayName != nil {
 		if len(*in.DisplayName) > 100 {
 			fail(w, r, badRequest("display name too long"))
@@ -115,9 +112,9 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 			fail(w, r, badRequest("preferences must be a JSON object under 16 KiB"))
 			return
 		}
-		u.Spec.Preferences = &runtime.RawExtension{Raw: raw}
+		u.Spec.Preferences = json.RawMessage(raw)
 	}
-	if err := s.Client.Patch(r.Context(), u, clientMergeFrom(before)); err != nil {
+	if err := s.DB.UpdateUser(r.Context(), u); err != nil {
 		fail(w, r, err)
 		return
 	}
@@ -208,7 +205,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		msg := err.Error()
-		if !errors.Is(err, users.ErrNotAllowed) && !errors.Is(err, users.ErrDisabled) && !apierrors.IsInvalid(err) {
+		if !errors.Is(err, users.ErrNotAllowed) && !errors.Is(err, users.ErrDisabled) {
 			log.Error(err, "oidc login")
 			msg = "sign in failed"
 		}
@@ -229,7 +226,7 @@ func loginErrorRedirect(w http.ResponseWriter, r *http.Request, msg string) {
 
 // --- helpers for user objects ---
 
-func toIdentities(in []devenvv1.Identity) []IdentityInfo {
+func toIdentities(in []model.Identity) []IdentityInfo {
 	out := make([]IdentityInfo, 0, len(in))
 	for _, id := range in {
 		out = append(out, IdentityInfo{Provider: id.Provider, Subject: id.Subject})

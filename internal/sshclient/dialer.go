@@ -15,12 +15,10 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
 
 // User is the login user inside environment images.
@@ -31,7 +29,7 @@ var ErrNotRunning = errors.New("environment is not running")
 
 // Dialer connects to environments.
 type Dialer struct {
-	Client    client.Reader
+	DB        *store.Store
 	Namespace string
 	Signer    ssh.Signer
 	// Timeout for TCP connect and SSH handshake.
@@ -41,16 +39,12 @@ type Dialer struct {
 }
 
 // Environment loads an environment by name.
-func (d *Dialer) Environment(ctx context.Context, name string) (*devenvv1.DevEnvironment, error) {
-	env := &devenvv1.DevEnvironment{}
-	if err := d.Client.Get(ctx, client.ObjectKey{Namespace: d.Namespace, Name: name}, env); err != nil {
-		return nil, err
-	}
-	return env, nil
+func (d *Dialer) Environment(ctx context.Context, name string) (*model.Environment, error) {
+	return d.DB.GetEnvironment(ctx, name)
 }
 
 // Dial opens an SSH client connection to the environment as the dev user.
-// The environment's host key is pinned from its Secret.
+// The environment's host key is pinned from the database.
 func (d *Dialer) Dial(ctx context.Context, name string) (*ssh.Client, error) {
 	c, chans, reqs, err := d.DialRaw(ctx, name)
 	if err != nil {
@@ -66,17 +60,13 @@ func (d *Dialer) DialRaw(ctx context.Context, name string) (ssh.Conn, <-chan ssh
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if !env.IsRunning() || env.Status.Phase != devenvv1.PhaseRunning || env.Status.ServiceName == "" {
+	if !env.IsRunning() || env.Status.Phase != model.PhaseRunning || env.Status.ServiceName == "" || env.Deleting {
 		return nil, nil, nil, fmt.Errorf("%w (phase %s)", ErrNotRunning, env.Status.Phase)
 	}
-	sec := &corev1.Secret{}
-	if err := d.Client.Get(ctx, client.ObjectKey{Namespace: d.Namespace, Name: env.Name + "-ssh"}, sec); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil, nil, fmt.Errorf("%w: ssh secret missing", ErrNotRunning)
-		}
-		return nil, nil, nil, err
+	if len(env.HostKeyPub) == 0 {
+		return nil, nil, nil, fmt.Errorf("%w: host key missing", ErrNotRunning)
 	}
-	hostKey, _, _, _, err := ssh.ParseAuthorizedKey(sec.Data[controller.HostPublicKeyFile])
+	hostKey, _, _, _, err := ssh.ParseAuthorizedKey(env.HostKeyPub)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("parse environment host key: %w", err)
 	}
@@ -136,11 +126,7 @@ func (d *Dialer) PasswordHash(ctx context.Context, name string) (hash, envName s
 	if err != nil {
 		return "", "", err
 	}
-	sec := &corev1.Secret{}
-	if err := d.Client.Get(ctx, client.ObjectKey{Namespace: d.Namespace, Name: env.Name + "-ssh"}, sec); err != nil {
-		return "", "", err
-	}
-	return string(sec.Data[controller.PasswordHashFile]), env.Name, nil
+	return env.PasswordHash, env.Name, nil
 }
 
 // PushPassword applies a bcrypt hash ("" locks the password) inside a running

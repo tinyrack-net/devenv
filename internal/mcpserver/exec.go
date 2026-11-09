@@ -16,7 +16,7 @@ import (
 	"github.com/tinyrack-net/devenv/internal/agent"
 	"golang.org/x/crypto/ssh"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
@@ -222,7 +222,7 @@ func (s *Server) connect(ctx context.Context, name string, autoStart bool) (*ssh
 	if err != nil {
 		return nil, nil, userErr(err)
 	}
-	if env.Status.Phase != devenvv1.PhaseRunning || !env.IsRunning() {
+	if env.Status.Phase != model.PhaseRunning || !env.IsRunning() {
 		if !autoStart {
 			return nil, nil, errorf("environment %s is %s; start it with start_environment or pass auto_start", name, env.Status.Phase)
 		}

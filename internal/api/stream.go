@@ -3,20 +3,19 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
-	toolscache "k8s.io/client-go/tools/cache"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/access"
 	"github.com/tinyrack-net/devenv/internal/activity"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
 
-// Broker fans out environment changes from the informer cache to SSE clients.
+// Broker fans out environment changes from the database to SSE clients.
 type Broker struct {
 	mu   sync.Mutex
 	subs map[chan envEvent]struct{}
@@ -24,39 +23,41 @@ type Broker struct {
 
 type envEvent struct {
 	Type string // "upsert" or "delete"
-	Env  *devenvv1.DevEnvironment
+	Name string
+	Env  *model.Environment // nil for deletes
 }
 
-// Watch registers informer handlers. Call before the cache starts or after;
-// the informer replays existing objects as adds.
-func (b *Broker) Watch(ctx context.Context, c cache.Cache) error {
-	inf, err := c.GetInformer(ctx, &devenvv1.DevEnvironment{})
-	if err != nil {
-		return err
-	}
-	_, err = inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
-		AddFunc:    func(o any) { b.publish("upsert", o) },
-		UpdateFunc: func(_, o any) { b.publish("upsert", o) },
-		DeleteFunc: func(o any) {
-			if t, ok := o.(toolscache.DeletedFinalStateUnknown); ok {
-				o = t.Obj
+// Watch follows database changes (this process and, through polling, other
+// writers) until ctx ends.
+func (b *Broker) Watch(ctx context.Context, db *store.Store) {
+	changes, cancel := db.Subscribe()
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
+	go db.Poll(ctx, 2*time.Second)
+	go func() {
+		for c := range changes {
+			if c.Kind != store.KindEnvironment {
+				continue
 			}
-			b.publish("delete", o)
-		},
-	})
-	return err
+			env, err := db.GetEnvironment(ctx, c.Name)
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+				b.publish(envEvent{Type: "delete", Name: c.Name})
+			case err == nil:
+				b.publish(envEvent{Type: "upsert", Name: c.Name, Env: env})
+			}
+		}
+	}()
 }
 
-func (b *Broker) publish(typ string, o any) {
-	env, ok := o.(*devenvv1.DevEnvironment)
-	if !ok {
-		return
-	}
+func (b *Broker) publish(ev envEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs {
 		select {
-		case ch <- envEvent{Type: typ, Env: env}:
+		case ch <- ev:
 		default:
 		}
 	}
@@ -122,6 +123,13 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	// Access to an environment can change with its spec; remember what this
 	// client saw so it gets a delete when access is lost.
 	visible := map[string]bool{}
+	if list, err := s.DB.ListEnvironments(r.Context()); err == nil {
+		for i := range list {
+			if access.Environment(p, &list[i]) != access.None {
+				visible[list[i].Name] = true
+			}
+		}
+	}
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
 	for {
@@ -134,18 +142,20 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			fl.Flush()
 		case ev := <-envs:
-			name := ev.Env.Name
-			lvl := access.Environment(p, ev.Env)
-			if ev.Type == "delete" || lvl == access.None {
-				if visible[name] || (ev.Type == "delete" && lvl != access.None) {
-					delete(visible, name)
-					if !send("environment", map[string]any{"type": "delete", "name": name}) {
+			lvl := access.None
+			if ev.Env != nil {
+				lvl = access.Environment(p, ev.Env)
+			}
+			if ev.Env == nil || lvl == access.None {
+				if visible[ev.Name] {
+					delete(visible, ev.Name)
+					if !send("environment", map[string]any{"type": "delete", "name": ev.Name}) {
 						return
 					}
 				}
 				continue
 			}
-			visible[name] = true
+			visible[ev.Name] = true
 			if !send("environment", map[string]any{"type": "upsert", "environment": s.view(ev.Env, lvl)}) {
 				return
 			}

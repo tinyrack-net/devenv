@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/access"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/auth"
@@ -28,7 +28,7 @@ func activityLog(ctx context.Context) *activity.Log {
 	return l
 }
 
-func sharedWith(p *auth.Principal, e *devenvv1.DevEnvironment) bool {
+func sharedWith(p *auth.Principal, e *model.Environment) bool {
 	personal := &auth.Principal{Name: p.Name, Groups: p.Groups}
 	return access.Environment(personal, e) != access.None
 }

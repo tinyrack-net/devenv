@@ -18,7 +18,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list
@@ -61,7 +61,7 @@ type Checker struct {
 type Exclude = types.NamespacedName
 
 // Report computes capacity for the class.
-func (c *Checker) Report(ctx context.Context, class *devenvv1.DevEnvironmentClassSpec, exclude *Exclude) (*Report, error) {
+func (c *Checker) Report(ctx context.Context, class *model.ClassSpec, exclude *Exclude) (*Report, error) {
 	nodes := &corev1.NodeList{}
 	if err := c.Reader.List(ctx, nodes); err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
@@ -108,7 +108,7 @@ func (c *Checker) Report(ctx context.Context, class *devenvv1.DevEnvironmentClas
 
 	capTo(&rep.Max.CPU, class.Limits.MaxCPU)
 	capTo(&rep.Max.Memory, class.Limits.MaxMemory)
-	if class.EffectiveStorageMode() == devenvv1.StorageModePersistent && class.Limits.MaxDisk != nil {
+	if class.EffectiveStorageMode() == model.StorageModePersistent && class.Limits.MaxDisk != nil {
 		d := class.Limits.MaxDisk.DeepCopy()
 		rep.MaxDisk = &d
 	}
@@ -184,7 +184,7 @@ func (c *Checker) quotaFree(ctx context.Context, exclude *Exclude) (corev1.Resou
 }
 
 // Eligible reports whether a node can host environments of the class.
-func Eligible(n *corev1.Node, class *devenvv1.DevEnvironmentClassSpec) bool {
+func Eligible(n *corev1.Node, class *model.ClassSpec) bool {
 	if n.Spec.Unschedulable {
 		return false
 	}

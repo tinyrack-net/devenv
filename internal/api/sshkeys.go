@@ -8,10 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 func parseKey(raw string) (ssh.PublicKey, string, error) {
@@ -52,7 +50,7 @@ func keyID(fp string) string {
 	return hex.EncodeToString(sum[:6])
 }
 
-func toSSHKeys(in []devenvv1.UserSSHKey) []SSHKey {
+func toSSHKeys(in []model.UserSSHKey) []SSHKey {
 	out := make([]SSHKey, 0, len(in))
 	for _, k := range in {
 		pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey))
@@ -62,7 +60,7 @@ func toSSHKeys(in []devenvv1.UserSSHKey) []SSHKey {
 		fp := ssh.FingerprintSHA256(pk)
 		sk := SSHKey{ID: keyID(fp), Name: k.Name, PublicKey: k.PublicKey, Fingerprint: fp}
 		if k.CreatedAt != nil {
-			sk.CreatedAt = k.CreatedAt.Time
+			sk.CreatedAt = *k.CreatedAt
 		}
 		out = append(out, sk)
 	}
@@ -117,14 +115,13 @@ func (s *Server) createSSHKey(w http.ResponseWriter, r *http.Request) {
 	if comment != "" {
 		line += " " + comment
 	}
-	before := u.DeepCopy()
-	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
-	u.Spec.SSHKeys = append(u.Spec.SSHKeys, devenvv1.UserSSHKey{Name: name, PublicKey: line, CreatedAt: &now})
-	if err := s.Client.Patch(r.Context(), u, client.MergeFrom(before)); err != nil {
+	now := time.Now().UTC().Truncate(time.Second)
+	u.Spec.SSHKeys = append(u.Spec.SSHKeys, model.UserSSHKey{Name: name, PublicKey: line, CreatedAt: &now})
+	if err := s.DB.UpdateUser(r.Context(), u); err != nil {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, SSHKey{ID: keyID(fp), Name: name, PublicKey: line, Fingerprint: fp, CreatedAt: now.Time})
+	writeJSON(w, http.StatusCreated, SSHKey{ID: keyID(fp), Name: name, PublicKey: line, Fingerprint: fp, CreatedAt: now})
 }
 
 func (s *Server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
@@ -134,8 +131,7 @@ func (s *Server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	before := u.DeepCopy()
-	out := []devenvv1.UserSSHKey{}
+	out := []model.UserSSHKey{}
 	found := false
 	for _, k := range u.Spec.SSHKeys {
 		if pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey)); err == nil && keyID(ssh.FingerprintSHA256(pk)) == id {
@@ -149,7 +145,7 @@ func (s *Server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.Spec.SSHKeys = out
-	if err := s.Client.Patch(r.Context(), u, client.MergeFrom(before)); err != nil {
+	if err := s.DB.UpdateUser(r.Context(), u); err != nil {
 		fail(w, r, err)
 		return
 	}

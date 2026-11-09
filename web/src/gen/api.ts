@@ -9,7 +9,7 @@ export type { Token, Entry, ListeningPort, PtySession, Process, Output, StatsRes
 // source: images.go
 
 /**
- * ImageInput creates or replaces a DevImage.
+ * ImageInput creates or replaces an image.
  */
 export interface ImageInput {
   name?: string;
@@ -63,6 +63,10 @@ export interface Image {
    * CanManage reports whether the caller may edit the image.
    */
   canManage: boolean;
+  /**
+   * Managed images come from the deployment configuration (read-only).
+   */
+  managed: boolean;
 }
 /**
  * ResourcesInput uses strings so the frontend can send "2", "4Gi" etc.
@@ -110,6 +114,7 @@ export interface Environment {
   effective: ResourcesInput;
   running: boolean;
   phase: string;
+  reason?: string;
   message?: string;
   desktop: boolean;
   imageRef?: string;
@@ -403,6 +408,18 @@ export interface System {
   helperImage?: string;
   nodes: NodeCapacity[];
   counts: { [key: string]: number /* int */};
+  /**
+   * Database driver (sqlite, postgres).
+   */
+  database: string;
+}
+/**
+ * Orphan lists Kubernetes objects of an environment without a database
+ * record.
+ */
+export interface Orphan {
+  name: string;
+  objects: string[];
 }
 
 //////////

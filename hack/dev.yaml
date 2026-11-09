@@ -1,0 +1,11 @@
+# Configuration for `make run`.
+database:
+  driver: sqlite
+  path: bin/devenv-dev.db
+classes:
+  default:
+    storage: {mode: persistent, defaultSize: 10Gi}
+images:
+  base:
+    image: ghcr.io/tinyrack-net/devenv-base:latest
+    displayName: Ubuntu 24.04

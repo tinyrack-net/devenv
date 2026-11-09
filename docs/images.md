@@ -14,7 +14,7 @@ implement it and are good starting points (`FROM ghcr.io/tinyrack-net/devenv-bas
 | Authorized keys | read `/etc/devenv/ssh/authorized_keys` (use `AuthorizedKeysCommand`; Secret volumes fail `StrictModes`) |
 | Host key | use `/etc/devenv/ssh/ssh_host_ed25519_key` (stable per environment; the server pins it) |
 | Password (optional) | `/etc/devenv/ssh/password_hash` holds a bcrypt hash or is empty; apply it to `dev` in `/etc/shadow` (empty = locked) and allow `PasswordAuthentication`. For instant changes, provide `/usr/local/bin/devenv-password-sync --stdin` (the server pipes the new hash to it over SSH) |
-| Desktop (optional) | VNC (RFB) on `127.0.0.1:5901`, no password. Set `desktop: true` on the DevImage |
+| Desktop (optional) | VNC (RFB) on `127.0.0.1:5901`, no password. Set `desktop: true` on the image |
 
 The devenv server reaches the environment only through SSH. The web
 terminal is an SSH session and the desktop is an SSH tunnel to
@@ -29,7 +29,7 @@ Nothing else is required for the MCP tools: the server mounts its helper
 |---|---|
 | `DEVENV_NAME` | Environment name |
 | `DEVENV_OWNER` | Owner user name |
-| `DEVENV_DESKTOP` | `true` when the DevImage is a desktop image |
+| `DEVENV_DESKTOP` | `true` when the image is a desktop image |
 
 ## Extending the official images
 
@@ -46,15 +46,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends golang && rm -r
 COPY my-hook.sh /etc/devenv/entrypoint.d/60-my-hook.sh
 ```
 
-Register the image in the console (Images → Add image) or with a manifest:
+Register the image in the console (Images → Add image) or in the chart values:
 
 ```yaml
-apiVersion: devenv.tinyrack.net/v1alpha1
-kind: DevImage
-metadata:
-  name: go
-spec:
-  image: ghcr.io/example/devenv-go:1.0
-  displayName: Go
-  defaultResources: { cpu: "2", memory: 4Gi }
+extraImages:
+  go:
+    image: ghcr.io/example/devenv-go:1.0
+    displayName: Go
+    defaultResources: { cpu: "2", memory: 4Gi }
 ```

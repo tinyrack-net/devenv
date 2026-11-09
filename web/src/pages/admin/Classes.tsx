@@ -1,40 +1,19 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type AccessInput, type Class } from "../../lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api, type Class } from "../../lib/api";
 import { formatBytes, formatCPU } from "../../lib/quantity";
 import { PageHeader } from "../../components/Layout";
-import { CopyField, ErrorAlert, Field, Loading, Modal, TagInput } from "../../components/ui";
+import { CopyField, ErrorAlert, Loading, Modal } from "../../components/ui";
 import { AdminOnly } from "./AdminOnly";
 
-function ClassDetail({ cls, onDone }: { cls: Class; onDone: () => void }) {
-  const qc = useQueryClient();
+function ClassDetail({ cls }: { cls: Class }) {
   const detail = useQuery({ queryKey: ["class", cls.name], queryFn: () => api.classDetail(cls.name) });
-  const users = useQuery({ queryKey: ["users"], queryFn: api.users });
-  const [acc, setAcc] = useState<AccessInput>(cls.access);
-  const save = useMutation({
-    mutationFn: () => api.updateClassAccess(cls.name, acc),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["classes"] });
-      onDone();
-    },
-  });
+  const who = cls.access.groups.length + cls.access.users.length === 0 ? "everyone" : [...cls.access.groups.map((g) => `@${g}`), ...cls.access.users].join(", ");
   return (
     <div className="space-y-3">
-      <p className="text-sm text-base-content/60">Storage, network and scheduling are managed declaratively (Helm values or GitOps). Here you choose who may use the class.</p>
-      <div className="grid gap-x-4 sm:grid-cols-2">
-        <Field label="Groups" hint="Empty users and groups: everyone.">
-          <TagInput value={acc.groups} onChange={(g) => setAcc({ ...acc, groups: g })} placeholder="group" />
-        </Field>
-        <Field label="Users">
-          <TagInput value={acc.users} onChange={(u) => setAcc({ ...acc, users: u })} placeholder="user" suggestions={(users.data ?? []).map((u) => ({ value: u.name }))} />
-        </Field>
-      </div>
-      <ErrorAlert error={save.error} />
-      <div className="flex justify-end">
-        <button className="btn btn-primary btn-sm" onClick={() => save.mutate()} disabled={save.isPending}>
-          Save access
-        </button>
-      </div>
+      <p className="text-sm text-base-content/60">
+        Classes are part of the deployment configuration (Helm values <code>defaultClass</code> / <code>extraClasses</code>). Available to {who}.
+      </p>
       <h3 className="text-sm font-medium">Spec</h3>
       {detail.data ? <CopyField value={JSON.stringify(detail.data.spec, null, 2)} /> : <Loading />}
     </div>
@@ -75,7 +54,7 @@ export function AdminClassesPage() {
         ))}
       </div>
       <Modal open={!!sel} onClose={() => setSel(null)} title={`Class ${sel?.name}`} wide>
-        {sel && <ClassDetail cls={sel} onDone={() => setSel(null)} />}
+        {sel && <ClassDetail cls={sel} />}
       </Modal>
     </AdminOnly>
   );

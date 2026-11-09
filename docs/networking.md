@@ -1,7 +1,8 @@
 # Networking
 
 How an environment is reachable from outside the cluster is decided by its
-`DevEnvironmentClass` (`spec.network.mode`). The web terminal, the VNC desktop
+class (`network.mode`). Classes are part of the chart values (`defaultClass.spec`,
+`extraClasses`). The web terminal, the VNC desktop
 and the SSH gateway work in every mode.
 
 | Mode | Address | Ports | Requirements |
@@ -13,18 +14,15 @@ and the SSH gateway work in every mode.
 ## loadBalancer
 
 ```yaml
-apiVersion: devenv.tinyrack.net/v1alpha1
-kind: DevEnvironmentClass
-metadata:
-  name: lb
-spec:
-  network:
-    mode: loadBalancer
-    loadBalancer:
-      # optional
-      loadBalancerClassName: io.cilium/l2-announcer
-      labels: { pool: lan }
-      annotations: {}
+extraClasses:
+  lb:
+    network:
+      mode: loadBalancer
+      loadBalancer:
+        # optional
+        loadBalancerClassName: io.cilium/l2-announcer
+        labels: { pool: lan }
+        annotations: {}
 ```
 
 Each environment gets a `<name>-lb` Service with SSH plus the ports added in
@@ -37,21 +35,18 @@ The class references a NetworkAttachmentDefinition (NAD) you create. devenv
 does not install CNI plugins.
 
 ```yaml
-apiVersion: devenv.tinyrack.net/v1alpha1
-kind: DevEnvironmentClass
-metadata:
-  name: lan
-spec:
-  network:
-    mode: multus
-    multus:
-      networkAttachment: devenv/lan-dhcp   # namespace/name or name
-      interface: net1                      # default
-      stableMAC: true                      # derive the MAC from the environment UID
+extraClasses:
+  lan:
+    network:
+      mode: multus
+      multus:
+        networkAttachment: devenv/lan-dhcp   # namespace/name or name
+        interface: net1                      # default
+        stableMAC: true                      # fixed MAC per environment (kept in the database)
 ```
 
 The IP reported by Multus (`k8s.v1.cni.cncf.io/network-status`) is shown in
-the console and in `status.ip`.
+the console and the API (`ip`).
 
 ### LAN IP from the network's DHCP server (macvlan + dhcp)
 

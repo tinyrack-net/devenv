@@ -6,11 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-func clientMergeFrom(o client.Object) client.Patch { return client.MergeFrom(o) }
 
 // rateLimiter allows n events per window per key (fixed window).
 type rateLimiter struct {

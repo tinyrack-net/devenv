@@ -1,79 +1,79 @@
 # Disaster recovery
 
-devenv has no database. Its state is Kubernetes objects and home volumes:
+devenv's state has three owners, each restored by the tool that already backs it up:
 
-| State | Where | Backed up by |
+| State | Where | Restored by |
 |---|---|---|
-| Users (roles, SSH keys, limits, OIDC links) | `DevUser` | `devenv backup` |
-| Images, classes | `DevImage`, `DevEnvironmentClass` | `devenv backup` (and usually Helm/GitOps) |
-| Environments (image, resources, sharing, class) | `DevEnvironment` | `devenv backup` |
-| Environment SSH host keys and passwords | `<env>-ssh`, `<env>-password` Secrets | `devenv backup` |
-| Server keys (gateway host key, session key, legacy MCP token), access tokens | `devenv-keys`, `devenv-token-*` Secrets | `devenv backup` |
-| Home volumes (`/home/dev`) | PVC `<env>-home` | your storage system |
+| Deployment: auth, classes, catalog images, limits | Helm values (`devenv.yaml`) | Git / Helm |
+| Users, environments, SSH host keys, passwords, multus MACs, access tokens, server keys, console created images | Database (SQLite or PostgreSQL) | Database backup |
+| Home directories (`/home/dev`) | PVC `<env>-home` per environment | Storage backup |
+
+Pods, services and the `<env>-ssh` secrets are derived from the database by the
+controller and need no backup.
 
 ## Backups
 
-Enable the daily metadata backup in the chart:
+**Database.**
 
-```yaml
-backup:
-  enabled: true
-  schedule: "15 3 * * *"
-  dest: s3://my-bucket/devenv
-  keep: 14
-  s3:
-    endpoint: https://s3.example.com
-    existingSecret: devenv-backup-s3   # keys AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-```
+- PostgreSQL: use the database's own backups (for example CloudNativePG with
+  barman-cloud and point in time recovery).
+- SQLite: back up the PVC `devenv-data` with your storage system. Select it with
+  `database.sqlite.labels`, e.g. Longhorn:
 
-The backup contains Secrets (host keys, password hashes, token hashes, the session key): keep
-the bucket private.
+  ```yaml
+  database:
+    sqlite:
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
+  ```
 
-Back up home volumes with the storage system. Select them with class labels, which devenv
-copies onto every home PVC:
+**Home volumes.** Classes add labels to every home PVC, so storage backups can select
+them:
 
 ```yaml
 defaultClass:
   spec:
     storage:
       labels:
-        recurring-job-group.longhorn.io/longhorn-backup: enabled   # Longhorn example
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
 ```
 
-Velero or CSI snapshots work as well; select PVCs with the label
+Velero or CSI snapshots work as well: select PVCs labelled
 `devenv.tinyrack.net/component: home`.
+
+The database holds secrets (host keys, password and token hashes, the session key):
+keep its backups private.
 
 ## Restore
 
-1. Install devenv with the same values (chart, classes, images).
-2. Restore the home volumes with the storage system: PVC `<env>-home` in the environment
-   namespace, bound to the restored volume. Restored PVCs may still reference the old
-   environment as owner; devenv adopts them.
-3. Restore the metadata:
+There is no devenv specific step. Restore in any order:
 
-   ```sh
-   kubectl -n devenv-system create job devenv-restore --from=cronjob/devenv-backup --dry-run=client -o yaml \
-     | sed 's/- backup$/- restore/' | kubectl apply -f -
-   # or run the image directly:
-   devenv restore --dest s3://my-bucket/devenv --name latest
-   ```
+1. Reinstall devenv with the same values (GitOps does this).
+2. Restore the database.
+3. Restore the home volumes (`<env>-home` in the environment namespace).
 
-   Restore creates server Secrets, users, images, class access lists, environment Secrets and
-   environments. Environments start stopped and wait for their home volume
-   (annotation `devenv.tinyrack.net/await-volume`) instead of creating an empty one; those
-   that were running start once their volume is bound (`--volume-timeout`, default 30m).
-   `--dry-run` lists what a backup contains; `--overwrite` replaces existing objects.
+The controller then recreates every environment from the database:
 
-What survives a restore:
+- **An environment never starts with an empty home directory by accident.** The database
+  records that a home volume was created. While that volume is missing (the storage
+  restore is still running), the environment stays `Pending` with reason
+  `AwaitingVolume`. Once the PVC is back, the controller adopts it and starts the
+  environment.
+- **SSH host keys come from the database.** Clients see no host key warnings.
+- **Multus MACs are pinned in the database.** DHCP hands out the same addresses.
+- **Access tokens, the legacy MCP token and console sessions keep working**, because the
+  server keys are in the database.
 
-- `/home/dev` (from the storage backup)
-- SSH host keys of the gateway and of every environment: clients see no host key warning
-- Dedicated LAN addresses: multus MACs are recorded and pinned, so DHCP hands out the same
-  lease
-- Access tokens and the legacy MCP token; console sessions (same session key)
+If a home volume is gone for good, an administrator can start the environment with an
+empty volume: Administration → Environments → *Reset volume*
+(`POST /api/v1/admin/environments/<name>/reset-volume`).
 
-Not restored: background processes and terminal sessions (they live in the container), files
-outside `/home/dev`.
+**Database restored to an earlier point.** Objects of environments created after that
+point have no record. devenv leaves them alone, because their volumes may hold the only
+copy of someone's work. Administration → System lists them as orphans. Recreate an
+environment with the same name to adopt its volume, or delete the orphan.
 
-An environment left waiting for a volume that will not come back can start empty by removing
-the annotation: `kubectl -n devenv annotate denv <name> devenv.tinyrack.net/await-volume-`.
+Not restored: running processes and terminal sessions (they live in the container) and
+files outside `/home/dev`.

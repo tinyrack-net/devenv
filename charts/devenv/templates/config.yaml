@@ -17,8 +17,48 @@
 {{- end }}
 {{- $users := dict "defaultLimits" (.Values.users.defaultLimits | default dict) }}
 {{- with .Values.users.adminLimits }}{{ $_ := set $users "adminLimits" . }}{{ end }}
+{{- $classes := dict }}
+{{- if .Values.defaultClass.create }}
+{{- $_ := set $classes "default" .Values.defaultClass.spec }}
+{{- end }}
+{{- range $name, $spec := .Values.extraClasses }}
+{{- $_ := set $classes $name $spec }}
+{{- end }}
+{{- $images := dict }}
+{{- if .Values.defaultImages.create }}
+{{- $d := .Values.defaultImages }}
+{{- if $d.base.enabled }}
+{{- $_ := set $images "base" (dict "image" (printf "%s:%s" $d.base.repository (default .Chart.AppVersion $d.base.tag)) "prepull" $d.base.prepull "displayName" "Ubuntu 24.04" "description" "Ubuntu with common developer tools" "defaultResources" (dict "cpu" "2" "memory" "4Gi")) }}
+{{- end }}
+{{- if $d.desktop.enabled }}
+{{- $_ := set $images "desktop" (dict "image" (printf "%s:%s" $d.desktop.repository (default .Chart.AppVersion $d.desktop.tag)) "prepull" $d.desktop.prepull "displayName" "Ubuntu 24.04 + XFCE" "description" "Desktop environment in the browser (VNC)" "desktop" true "defaultResources" (dict "cpu" "2" "memory" "4Gi")) }}
+{{- end }}
+{{- if $d.agent.enabled }}
+{{- $_ := set $images "agent" (dict "image" (printf "%s:%s" $d.agent.repository (default .Chart.AppVersion $d.agent.tag)) "prepull" $d.agent.prepull "displayName" "Ubuntu 24.04 + toolchains" "description" "Go, Node.js (pnpm, yarn), Python (uv), GitHub CLI, ripgrep" "defaultResources" (dict "cpu" "2" "memory" "4Gi")) }}
+{{- end }}
+{{- end }}
+{{- range $name, $spec := .Values.extraImages }}
+{{- $_ := set $images $name $spec }}
+{{- end }}
+{{- $db := dict "driver" .Values.database.driver }}
+{{- if eq .Values.database.driver "sqlite" }}
+{{- $_ := set $db "path" "/var/lib/devenv/devenv.db" }}
+{{- else if eq .Values.database.driver "postgres" }}
+{{- if .Values.database.postgres.existingSecret }}
+{{- $_ := set $db "urlFile" "/etc/devenv/secrets/database/url" }}
+{{- else if .Values.database.postgres.url }}
+{{- $_ := set $db "url" .Values.database.postgres.url }}
+{{- else }}
+{{- fail "database.postgres.url or database.postgres.existingSecret is required" }}
+{{- end }}
+{{- else }}
+{{- fail "database.driver must be sqlite or postgres" }}
+{{- end }}
 {{- $cfg := dict
   "server" (dict "externalURL" .Values.externalURL)
+  "database" $db
+  "classes" $classes
+  "images" $images
   "auth" (dict
     "disabled" (eq .Values.auth.mode "none")
     "admins" .Values.auth.admins

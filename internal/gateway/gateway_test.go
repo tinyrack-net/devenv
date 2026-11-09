@@ -13,16 +13,12 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/controller"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/store/storetest"
 )
 
 func newSigner(t *testing.T) ssh.Signer {
@@ -138,31 +134,24 @@ type setup struct {
 	gwHost  ssh.PublicKey
 }
 
-func start(t *testing.T, phase devenvv1.Phase) setup {
+func start(t *testing.T, phase model.Phase) setup {
 	t.Helper()
 	envHost, serverKey, gwHost, userKey := newSigner(t), newSigner(t), newSigner(t), newSigner(t)
 	envLn := fakeEnv(t, envHost, serverKey.PublicKey())
 
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = devenvv1.AddToScheme(s)
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
-		&devenvv1.DevEnvironment{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "work"},
-			Spec: devenvv1.DevEnvironmentSpec{
-				ImageRef: "base", Running: ptr.To(true),
-				SSHAuthorizedKeys: []string{authorized(userKey)},
-			},
-			Status: devenvv1.DevEnvironmentStatus{Phase: phase, ServiceName: "work"},
+	db := storetest.New(t)
+	if err := db.CreateEnvironment(context.Background(), &model.Environment{
+		Name: "work",
+		Spec: model.EnvironmentSpec{
+			ImageRef: "base", Running: ptr.To(true),
+			SSHAuthorizedKeys: []string{authorized(userKey)},
 		},
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "work-ssh"},
-			Data: map[string][]byte{
-				controller.HostPublicKeyFile: ssh.MarshalAuthorizedKey(envHost.PublicKey()),
-				controller.PasswordHashFile:  []byte(testHash),
-			},
-		},
-	).Build()
+		Status:       model.EnvironmentStatus{Phase: phase, ServiceName: "work"},
+		HostKeyPub:   ssh.MarshalAuthorizedKey(envHost.PublicKey()),
+		PasswordHash: testHash,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	gwLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -174,7 +163,7 @@ func start(t *testing.T, phase devenvv1.Phase) setup {
 		Addr:    addr,
 		HostKey: gwHost,
 		Dialer: &sshclient.Dialer{
-			Client: c, Namespace: "devenv", Signer: serverKey,
+			DB: db, Namespace: "devenv", Signer: serverKey,
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, envLn.Addr().String())
 			},
@@ -203,7 +192,7 @@ func (s setup) dial(user string, key ssh.Signer) (*ssh.Client, error) {
 }
 
 func TestExecAndExitStatus(t *testing.T) {
-	s := start(t, devenvv1.PhaseRunning)
+	s := start(t, model.PhaseRunning)
 	c, err := s.dial("work", s.userKey)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +219,7 @@ func TestExecAndExitStatus(t *testing.T) {
 }
 
 func TestLocalForward(t *testing.T) {
-	s := start(t, devenvv1.PhaseRunning)
+	s := start(t, model.PhaseRunning)
 	target, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer target.Close()
 	go func() {
@@ -258,7 +247,7 @@ func TestLocalForward(t *testing.T) {
 }
 
 func TestRejects(t *testing.T) {
-	s := start(t, devenvv1.PhaseRunning)
+	s := start(t, model.PhaseRunning)
 	if _, err := s.dial("work", newSigner(t)); err == nil {
 		t.Error("unknown key must be rejected")
 	}
@@ -268,7 +257,7 @@ func TestRejects(t *testing.T) {
 }
 
 func TestStoppedEnvironmentMessage(t *testing.T) {
-	s := start(t, devenvv1.PhaseStopped)
+	s := start(t, model.PhaseStopped)
 	c, err := s.dial("work", s.userKey)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +279,7 @@ func TestStoppedEnvironmentMessage(t *testing.T) {
 var testHash, _ = controller.HashPassword("correct horse")
 
 func TestPasswordAuth(t *testing.T) {
-	s := start(t, devenvv1.PhaseRunning)
+	s := start(t, model.PhaseRunning)
 	dial := func(user, pw string) (*ssh.Client, error) {
 		return ssh.Dial("tcp", s.addr, &ssh.ClientConfig{
 			User: user, Auth: []ssh.AuthMethod{ssh.Password(pw)},

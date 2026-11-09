@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/access"
 	"github.com/tinyrack-net/devenv/internal/agent"
 	"github.com/tinyrack-net/devenv/internal/controller"
@@ -45,7 +45,7 @@ func (s *Server) withHelper(w http.ResponseWriter, r *http.Request, fn func(ctx 
 		fail(w, r, err)
 		return
 	}
-	if env.Status.Phase != devenvv1.PhaseRunning {
+	if env.Status.Phase != model.PhaseRunning {
 		fail(w, r, errNotRunning)
 		return
 	}
@@ -189,9 +189,9 @@ func (s *Server) listPorts(w http.ResponseWriter, r *http.Request) {
 			pp := Port{ListeningPort: p}
 			if env.Status.IP != "" && !p.Local {
 				switch env.Status.NetworkMode {
-				case devenvv1.NetworkModeMultus:
+				case model.NetworkModeMultus:
 					pp.Exposed = true
-				case devenvv1.NetworkModeLoadBalancer:
+				case model.NetworkModeLoadBalancer:
 					pp.Exposed = exposed[int32(p.Port)]
 				}
 				if pp.Exposed {

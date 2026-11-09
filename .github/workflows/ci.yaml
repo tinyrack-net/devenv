@@ -11,17 +11,23 @@ permissions:
 jobs:
   go:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: devenv
+          POSTGRES_DB: devenv
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Verify generated files
-        run: |
-          make generate manifests
-          git diff --exit-code
       - run: go vet ./...
       - run: make test
+        env:
+          DEVENV_TEST_POSTGRES: postgres://postgres:devenv@localhost:5432/devenv?sslmode=disable
 
   web:
     runs-on: ubuntu-latest
@@ -48,3 +54,4 @@ jobs:
       - uses: azure/setup-helm@v5
       - run: helm lint charts/devenv
       - run: helm template devenv charts/devenv -n devenv-system > /dev/null
+      - run: helm template devenv charts/devenv -n devenv-system --set database.driver=postgres --set database.postgres.existingSecret=db > /dev/null

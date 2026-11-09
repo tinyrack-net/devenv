@@ -9,29 +9,32 @@ import (
 	"net/http"
 	"strings"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/catalog"
 	"github.com/tinyrack-net/devenv/internal/config"
+	"github.com/tinyrack-net/devenv/internal/store"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
 )
 
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironmentclasses,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=list
 
 // Server serves the REST API and the SPA.
 type Server struct {
-	// Client is used for CRD reads (cached) and writes.
-	Client client.Client
-	// Reader is an uncached reader for cluster wide reads (nodes, pods, events).
-	Reader    client.Reader
+	// DB is the source of truth.
+	DB      *store.Store
+	Catalog *catalog.Catalog
+	// Reader is an uncached reader for cluster reads (nodes, pods, events,
+	// orphaned objects).
+	Reader client.Reader
+	// Client deletes orphaned objects (admin). May be nil.
+	Client    client.Client
 	Namespace string
 	Config    *config.Config
 	Sessions  *auth.Sessions
@@ -83,7 +86,6 @@ func (s *Server) Handler() http.Handler {
 
 	api.HandleFunc("GET /api/v1/classes", s.listClasses)
 	api.HandleFunc("GET /api/v1/classes/{name}", s.getClass)
-	api.HandleFunc("PUT /api/v1/classes/{name}/access", s.updateClassAccess)
 	api.HandleFunc("GET /api/v1/classes/{name}/capacity", s.classCapacity)
 
 	api.HandleFunc("GET /api/v1/environments", s.listEnvironments)
@@ -119,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/admin/tokens/{id}", s.adminDeleteToken)
 	api.HandleFunc("GET /api/v1/admin/activity", s.adminActivity)
 	api.HandleFunc("GET /api/v1/admin/system", s.adminSystem)
+	api.HandleFunc("GET /api/v1/admin/orphans", s.adminOrphans)
+	api.HandleFunc("DELETE /api/v1/admin/orphans/{name}", s.adminDeleteOrphan)
+	api.HandleFunc("POST /api/v1/admin/environments/{name}/reset-volume", s.adminResetVolume)
 
 	s.registerWorkspace(api)
 	for pattern, h := range s.Extra {
@@ -214,16 +219,12 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.As(err, &he):
 		writeError(w, he.code, he.msg)
-	case apierrors.IsNotFound(err):
+	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
-	case apierrors.IsAlreadyExists(err):
+	case errors.Is(err, store.ErrExists):
 		writeError(w, http.StatusConflict, "already exists")
-	case apierrors.IsConflict(err):
+	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "resource was modified, retry")
-	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
-	case apierrors.IsForbidden(err):
-		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, context.Canceled):
 	default:
 		logf.FromContext(r.Context()).Error(err, "request failed", "path", r.URL.Path)

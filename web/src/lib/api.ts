@@ -64,7 +64,9 @@ export const api = {
 
   classes: () => request<T.Class[]>("GET", "/classes"),
   classDetail: (name: string) => request<T.ClassDetail>("GET", `/classes/${e(name)}`),
-  updateClassAccess: (name: string, a: T.AccessInput) => request<T.Class>("PUT", `/classes/${e(name)}/access`, a),
+  orphans: () => request<T.Orphan[]>("GET", "/admin/orphans"),
+  deleteOrphan: (name: string) => request<void>("DELETE", `/admin/orphans/${e(name)}`),
+  resetVolume: (name: string) => request<T.Environment>("POST", `/admin/environments/${e(name)}/reset-volume`),
   capacity: (cls: string, exclude?: string) =>
     request<T.Capacity>("GET", `/classes/${e(cls)}/capacity${exclude ? `?exclude=${e(exclude)}` : ""}`),
 

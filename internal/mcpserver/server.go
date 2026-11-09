@@ -25,8 +25,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/tokens"
 )
 
-// LabelCreatedBy marks environments created through MCP.
-const LabelCreatedBy = api.LabelCreatedBy
 
 // Server implements the MCP tools.
 type Server struct {

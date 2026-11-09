@@ -30,13 +30,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/catalog"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
+	"github.com/tinyrack-net/devenv/internal/store/storetest"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
 	"github.com/tinyrack-net/devenv/internal/config"
-	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
@@ -163,6 +165,7 @@ type harness struct {
 	srv     *Server
 	t       *testing.T
 	c       client.Client
+	db      *store.Store
 	session *mcp.ClientSession
 	url     string
 }
@@ -184,12 +187,14 @@ func newHarness(t *testing.T) *harness {
 	})
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
-	_ = devenvv1.AddToScheme(s)
 	envHost, serverKey := signer(t), signer(t)
 	sshdAddr := localSSHD(t, envHost, serverKey.PublicKey())
 
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&devenvv1.DevEnvironment{}, &devenvv1.DevUser{}).WithObjects(
-		&devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: "admin"}, Spec: devenvv1.DevUserSpec{Role: devenvv1.RoleAdmin}},
+	db := storetest.New(t)
+	if err := db.CreateUser(context.Background(), &model.User{Name: "admin", Spec: model.UserSpec{Role: model.RoleAdmin}}); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
 			Status: corev1.NodeStatus{
@@ -197,57 +202,63 @@ func newHarness(t *testing.T) *harness {
 				Conditions:  []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 			},
 		},
-		&devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Spec: devenvv1.DevEnvironmentClassSpec{Limits: devenvv1.Limits{MaxCPU: q("4")}}},
-		&devenvv1.DevImage{ObjectMeta: metav1.ObjectMeta{Name: "base"}, Spec: devenvv1.DevImageSpec{Image: "example.com/base:1", DefaultResources: devenvv1.Resources{CPU: q("1"), Memory: q("1Gi")}}},
 	).Build()
 
 	sessions, _ := auth.NewSessions([]byte("k"), false)
 	dialer := &sshclient.Dialer{
-		Client: c, Namespace: "devenv", Signer: serverKey,
+		DB: db, Namespace: "devenv", Signer: serverKey,
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, sshdAddr)
 		},
 	}
 	cfg := &config.Config{Auth: config.Auth{Password: config.Password{Password: "pw"}}}
 	cfg.MCP.LegacyToken.Token = testToken
+	cfg.Classes = map[string]model.ClassSpec{"default": {Limits: model.Limits{MaxCPU: q("4")}}}
+	cfg.Images = map[string]model.ImageSpec{"base": {Image: "example.com/base:1", DefaultResources: model.Resources{CPU: q("1"), Memory: q("1Gi")}}}
 	cfg.Defaults()
 	apiSrv := &api.Server{
+		DB: db, Catalog: catalog.New(cfg, db),
 		Client: c, Reader: c, Namespace: "devenv", Config: cfg, Sessions: sessions,
-		Users:    &users.Store{Client: c, Config: cfg},
-		Tokens:   &tokens.Store{Client: c, Namespace: "devenv-system"},
+		Users:    &users.Store{DB: db, Config: cfg},
+		Tokens:   &tokens.Store{DB: db},
 		Capacity: &capacity.Checker{Reader: c, Namespace: "devenv"}, Dialer: dialer,
 	}
 	m := &Server{API: apiSrv, Dialer: dialer, Resolver: apiSrv, Activity: &activity.Log{}}
 	ts := httptest.NewServer(m.Handler())
 	t.Cleanup(ts.Close)
 
-	// A fake "controller": environments become Running immediately, with the
-	// host key Secret the dialer needs.
+	// A fake "controller": environments become Running immediately, with
+	// the host key the dialer needs; deleted ones disappear.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	hostPub := ssh.MarshalAuthorizedKey(envHost.PublicKey())
 	go func() {
 		for ctx.Err() == nil {
-			list := &devenvv1.DevEnvironmentList{}
-			_ = c.List(ctx, list)
-			for i := range list.Items {
-				e := &list.Items[i]
-				want := devenvv1.PhaseStopped
+			list, _ := db.ListEnvironments(ctx)
+			for i := range list {
+				e := &list[i]
+				if e.Deleting {
+					_ = db.DeleteEnvironment(ctx, e.Name)
+					continue
+				}
+				if string(e.HostKeyPub) != string(hostPub) {
+					_, _ = db.MutateEnvironment(ctx, e.Name, func(x *model.Environment) error { x.HostKeyPub = hostPub; return nil })
+				}
+				want := model.PhaseStopped
 				if e.IsRunning() {
-					want = devenvv1.PhaseRunning
+					want = model.PhaseRunning
 				}
 				if e.Status.Phase != want || e.Status.ObservedGeneration != e.Generation {
-					e.Status.Phase, e.Status.ServiceName, e.Status.ObservedGeneration = want, e.Name, e.Generation
-					_ = c.Status().Update(ctx, e)
+					st := e.Status
+					st.Phase, st.ServiceName, st.ObservedGeneration = want, e.Name, e.Generation
+					_ = db.UpdateEnvironmentStatus(ctx, e.Name, st)
 				}
-				sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: e.Name + "-ssh"},
-					Data: map[string][]byte{controller.HostPublicKeyFile: ssh.MarshalAuthorizedKey(envHost.PublicKey())}}
-				_ = c.Create(ctx, sec)
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 
-	h := &harness{t: t, c: c, url: ts.URL, srv: m}
+	h := &harness{t: t, c: c, db: db, url: ts.URL, srv: m}
 	cl := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
 	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
 		Endpoint:   ts.URL,
@@ -308,9 +319,9 @@ func (h *harness) validateOutput(name string, out any) {
 }
 
 // connectAs opens a second MCP session with a personal token of user.
-func (h *harness) connectAs(user string, role devenvv1.Role) *harness {
+func (h *harness) connectAs(user string, role model.Role) *harness {
 	h.t.Helper()
-	_ = h.c.Create(context.Background(), &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: user}, Spec: devenvv1.DevUserSpec{Role: role}})
+	_ = h.db.CreateUser(context.Background(), &model.User{Name: user, Spec: model.UserSpec{Role: role}})
 	_, plain, err := h.srv.API.Tokens.Create(context.Background(), user, "agent", []string{tokens.ScopeMCP}, 0)
 	if err != nil {
 		h.t.Fatal(err)
@@ -422,10 +433,9 @@ func TestLifecycleAndExec(t *testing.T) {
 	if created.Environment.Phase != "Running" || !created.Environment.CreatedByMCP {
 		t.Errorf("created = %+v", created.Environment)
 	}
-	obj := &devenvv1.DevEnvironment{}
-	_ = h.c.Get(context.Background(), client.ObjectKey{Namespace: "devenv", Name: "agent1"}, obj)
-	if obj.Spec.Owner != "admin" || obj.Labels[LabelCreatedBy] != "mcp" {
-		t.Errorf("owner/labels = %q %v", obj.Spec.Owner, obj.Labels)
+	obj, _ := h.db.GetEnvironment(context.Background(), "agent1")
+	if obj == nil || obj.Spec.Owner != "admin" || obj.CreatedBy != "mcp" {
+		t.Errorf("stored = %+v", obj)
 	}
 
 	var out execOut
@@ -495,8 +505,17 @@ func TestLifecycleAndExec(t *testing.T) {
 
 	var del deleteOut
 	h.call("delete_environment", map[string]any{"name": "agent1"}, &del)
-	if isErr, text := h.call("get_environment", map[string]any{"name": "agent1"}, nil); !isErr || !strings.Contains(text, "not found") {
-		t.Errorf("after delete: %v %s", isErr, text)
+	// The controller removes the record after cleaning up.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		isErr, text := h.call("get_environment", map[string]any{"name": "agent1"}, nil)
+		if isErr && strings.Contains(text, "not found") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after delete: %v %s", isErr, text)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -520,8 +539,8 @@ func TestBuildCommand(t *testing.T) {
 
 func TestPerUserTokens(t *testing.T) {
 	h := newHarness(t)
-	alice := h.connectAs("alice", devenvv1.RoleUser)
-	bob := h.connectAs("bob", devenvv1.RoleUser)
+	alice := h.connectAs("alice", model.RoleUser)
+	bob := h.connectAs("bob", model.RoleUser)
 
 	var out envOut
 	if isErr, text := alice.call("create_environment", map[string]any{"name": "a1", "image": "base"}, &out); isErr {

@@ -83,7 +83,7 @@ The chart registers an `agent` image (`ghcr.io/tinyrack-net/devenv-agent`): the 
 Go, Node.js with corepack (pnpm, yarn), Python with uv and the GitHub CLI. It is a convenience;
 MCP tools work with any image.
 
-DevImages with `prepull: true` (chart default for `base` and `agent`) are kept on every node by
+Images with `prepull: true` (chart default for `base` and `agent`) are kept on every node by
 a DaemonSet that mounts them as image volumes, so new environments do not wait for a pull.
 
 ## Clients

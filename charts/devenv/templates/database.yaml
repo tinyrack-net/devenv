@@ -1,0 +1,26 @@
+{{- if and (eq .Values.database.driver "sqlite") (not .Values.database.sqlite.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "devenv.fullname" . }}-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "devenv.labels" . | nindent 4 }}
+    {{- with .Values.database.sqlite.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # The database is the source of truth; keep it on uninstall.
+    helm.sh/resource-policy: keep
+    {{- with .Values.database.sqlite.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.database.sqlite.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.database.sqlite.size }}
+{{- end }}

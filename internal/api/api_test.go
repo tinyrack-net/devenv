@@ -19,11 +19,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/capacity"
+	"github.com/tinyrack-net/devenv/internal/catalog"
 	"github.com/tinyrack-net/devenv/internal/config"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
+	"github.com/tinyrack-net/devenv/internal/store/storetest"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
 )
@@ -40,14 +43,18 @@ type harness struct {
 	srv    *Server
 	h      http.Handler
 	c      client.Client
+	db     *store.Store
+	cat    *catalog.Catalog
 	cookie *http.Cookie
 }
 
-func newHarness(t *testing.T, objs ...client.Object) *harness {
+// newHarness builds a server with a "default" class, images "base" and
+// "old" (disabled) from the configuration, one node and the given
+// Kubernetes objects and environments.
+func newHarness(t *testing.T, objs ...any) *harness {
 	t.Helper()
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
-	_ = devenvv1.AddToScheme(s)
 	base := []client.Object{
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
@@ -56,60 +63,67 @@ func newHarness(t *testing.T, objs ...client.Object) *harness {
 				Conditions:  []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 			},
 		},
-		&devenvv1.DevEnvironmentClass{
-			ObjectMeta: metav1.ObjectMeta{Name: "default"},
-			Spec:       devenvv1.DevEnvironmentClassSpec{Limits: devenvv1.Limits{MaxCPU: qp("6"), MaxDisk: qp("100Gi")}},
-		},
-		&devenvv1.DevImage{
-			ObjectMeta: metav1.ObjectMeta{Name: "base"},
-			Spec:       devenvv1.DevImageSpec{Image: "example.com/base:1", DefaultResources: devenvv1.Resources{CPU: qp("2"), Memory: qp("4Gi")}},
-		},
-		&devenvv1.DevImage{
-			ObjectMeta: metav1.ObjectMeta{Name: "old"},
-			Spec:       devenvv1.DevImageSpec{Image: "example.com/old:1", Disabled: true},
-		},
 	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(append(base, objs...)...).
-		WithStatusSubresource(&devenvv1.DevEnvironment{}, &devenvv1.DevUser{}).Build()
+	db := storetest.New(t)
+	for _, o := range objs {
+		switch o := o.(type) {
+		case client.Object:
+			base = append(base, o)
+		case *model.Environment:
+			if err := db.CreateEnvironment(t.Context(), o); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unsupported fixture %T", o)
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(base...).Build()
 	sessions, _ := auth.NewSessions([]byte("k"), false)
 	cfg := &config.Config{Auth: config.Auth{Password: config.Password{Password: "pw"}}}
 	cfg.MCP.LegacyToken.Token = "legacy-token"
+	cfg.Classes = map[string]model.ClassSpec{"default": {Limits: model.Limits{MaxCPU: qp("6"), MaxDisk: qp("100Gi")}}}
+	cfg.Images = map[string]model.ImageSpec{
+		"base": {Image: "example.com/base:1", DefaultResources: model.Resources{CPU: qp("2"), Memory: qp("4Gi")}},
+		"old":  {Image: "example.com/old:1", Disabled: true},
+	}
 	cfg.Defaults()
+	cat := catalog.New(cfg, db)
 	srv := &Server{
+		DB:        db,
+		Catalog:   cat,
 		Client:    c,
 		Reader:    c,
 		Namespace: "devenv",
 		Config:    cfg,
 		Sessions:  sessions,
-		Users:     &users.Store{Client: c, Config: cfg},
-		Tokens:    &tokens.Store{Client: c, Namespace: "devenv-system"},
+		Users:     &users.Store{DB: db, Config: cfg},
+		Tokens:    &tokens.Store{DB: db},
 		Capacity:  &capacity.Checker{Reader: c, Namespace: "devenv"},
 		Activity:  &activity.Log{},
 		Static:    fstest.MapFS{"index.html": {Data: []byte("<html>spa</html>")}, "assets/app.js": {Data: []byte("js")}},
 	}
-	h := &harness{t: t, srv: srv, h: srv.Handler(), c: c}
+	h := &harness{t: t, srv: srv, h: srv.Handler(), c: c, db: db, cat: cat}
 	h.login()
 	return h
 }
 
 // as returns a harness acting as another user (created when missing).
-func (h *harness) as(name string, role devenvv1.Role, groups ...string) *harness {
+func (h *harness) as(name string, role model.Role, groups ...string) *harness {
 	h.t.Helper()
-	u := &devenvv1.DevUser{}
-	if err := h.c.Get(h.t.Context(), client.ObjectKey{Name: name}, u); err != nil {
-		u = &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: devenvv1.DevUserSpec{Role: role}}
-		if err := h.c.Create(h.t.Context(), u); err != nil {
+	if _, err := h.db.GetUser(h.t.Context(), name); err != nil {
+		if err := h.db.CreateUser(h.t.Context(), &model.User{Name: name, Spec: model.UserSpec{Role: role}}); err != nil {
 			h.t.Fatal(err)
 		}
 	}
 	if groups != nil {
-		u.Status.Groups = groups
-		if err := h.c.Status().Update(h.t.Context(), u); err != nil {
+		if _, err := h.db.MutateUser(h.t.Context(), name, func(u *model.User) error { u.Status.Groups = groups; return nil }); err != nil {
 			h.t.Fatal(err)
 		}
 	}
 	tok, _ := h.srv.Sessions.Encode(name, "test")
-	return &harness{t: h.t, srv: h.srv, h: h.h, c: h.c, cookie: &http.Cookie{Name: "devenv_session", Value: tok}}
+	cp := *h
+	cp.cookie = &http.Cookie{Name: "devenv_session", Value: tok}
+	return &cp
 }
 
 func (h *harness) login() {
@@ -199,12 +213,12 @@ func TestEnvironmentLifecycle(t *testing.T) {
 		t.Errorf("created = %+v", env)
 	}
 
-	obj := &devenvv1.DevEnvironment{}
-	if err := h.c.Get(t.Context(), client.ObjectKey{Namespace: "devenv", Name: "work"}, obj); err != nil {
+	obj, err := h.db.GetEnvironment(t.Context(), "work")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if obj.Spec.Resources.Disk.String() != "20Gi" || obj.Labels[devenvv1.LabelOwner] != "admin" {
-		t.Errorf("disk = %v labels = %v", obj.Spec.Resources.Disk, obj.Labels)
+	if obj.Spec.Resources.Disk.String() != "20Gi" || obj.Spec.Owner != "admin" {
+		t.Errorf("disk = %v owner = %v", obj.Spec.Resources.Disk, obj.Spec.Owner)
 	}
 
 	var list []Environment
@@ -229,11 +243,18 @@ func TestEnvironmentLifecycle(t *testing.T) {
 		t.Errorf("updated = %+v", env.Resources)
 	}
 
-	// Image in use can not be deleted.
-	h.do("DELETE", "/api/v1/images/base", nil, 409, nil)
+	// Images in use can not be deleted; configured ones never.
+	h.do("DELETE", "/api/v1/images/base", nil, 403, nil)
+	h.do("POST", "/api/v1/images", ImageInput{Name: "mine", Image: "example.com/m:1"}, 201, nil)
+	h.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "w2", Image: "mine", Running: new(bool)}, 201, nil)
+	h.do("DELETE", "/api/v1/images/mine", nil, 409, nil)
 
+	// Deletion marks the record; the controller removes it after cleanup.
 	h.do("DELETE", "/api/v1/environments/work", nil, 202, nil)
-	h.do("GET", "/api/v1/environments/work", nil, 404, nil)
+	h.do("GET", "/api/v1/environments/work", nil, 200, &env)
+	if !env.Deleting || env.Running {
+		t.Errorf("deleting = %+v", env)
+	}
 }
 
 func TestEnvironmentValidation(t *testing.T) {
@@ -283,9 +304,9 @@ func TestCapacityExcludesOwnPod(t *testing.T) {
 		}}}},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
-	env := &devenvv1.DevEnvironment{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "work"},
-		Spec:       devenvv1.DevEnvironmentSpec{ImageRef: "base", Resources: devenvv1.Resources{CPU: qp("6"), Memory: qp("12Gi")}},
+	env := &model.Environment{
+		Name: "work",
+		Spec: model.EnvironmentSpec{Owner: "admin", ImageRef: "base", Resources: model.Resources{CPU: qp("6"), Memory: qp("12Gi")}},
 	}
 	h := newHarness(t, pod, env)
 
@@ -328,6 +349,13 @@ func TestImageCRUD(t *testing.T) {
 		t.Errorf("images = %d", len(list))
 	}
 	h.do("DELETE", "/api/v1/images/desk", nil, 204, nil)
+	// Configured images are read-only.
+	h.do("GET", "/api/v1/images/base", nil, 200, &img)
+	if !img.Managed || img.CanManage {
+		t.Errorf("managed image = %+v", img)
+	}
+	h.do("PUT", "/api/v1/images/base", ImageInput{Image: "x"}, 403, nil)
+	h.do("POST", "/api/v1/images", ImageInput{Name: "base", Image: "x", Shared: true}, 409, nil)
 
 	var classes []Class
 	h.do("GET", "/api/v1/classes", nil, 200, &classes)
@@ -394,18 +422,9 @@ func TestPassword(t *testing.T) {
 	if !env.PasswordSet {
 		t.Errorf("passwordSet false")
 	}
-	sec := &corev1.Secret{}
-	if err := h.c.Get(t.Context(), client.ObjectKey{Namespace: "devenv", Name: "pw-password"}, sec); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := sec.Data["password"]; ok {
-		t.Error("plain password must not be stored")
-	}
-	if bcrypt.CompareHashAndPassword(sec.Data["passwordHash"], []byte("long enough pw")) != nil {
+	stored, _ := h.db.GetEnvironment(t.Context(), "pw")
+	if bcrypt.CompareHashAndPassword([]byte(stored.PasswordHash), []byte("long enough pw")) != nil {
 		t.Error("hash does not match")
-	}
-	if len(sec.OwnerReferences) != 1 || sec.OwnerReferences[0].Name != "pw" {
-		t.Errorf("owner refs = %+v", sec.OwnerReferences)
 	}
 
 	// Password is never returned.
@@ -419,8 +438,8 @@ func TestPassword(t *testing.T) {
 	if env.PasswordSet {
 		t.Error("password not removed")
 	}
-	if err := h.c.Get(t.Context(), client.ObjectKey{Namespace: "devenv", Name: "pw-password"}, &corev1.Secret{}); err == nil {
-		t.Error("password secret not deleted")
+	if rec, _ := h.db.GetEnvironment(t.Context(), "pw"); rec.PasswordHash != "" {
+		t.Error("hash not removed")
 	}
 	pw := "another password"
 	h.do("PATCH", "/api/v1/environments/pw", UpdateEnvironmentRequest{Password: &pw}, 200, &env)
@@ -431,9 +450,9 @@ func TestPassword(t *testing.T) {
 
 func TestMultiUser(t *testing.T) {
 	h := newHarness(t)
-	alice := h.as("alice", devenvv1.RoleUser, "dev")
-	bob := h.as("bob", devenvv1.RoleUser)
-	carol := h.as("carol", devenvv1.RoleUser, "ops")
+	alice := h.as("alice", model.RoleUser, "dev")
+	bob := h.as("bob", model.RoleUser)
+	carol := h.as("carol", model.RoleUser, "ops")
 
 	var env Environment
 	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "a1", Image: "base", Running: new(bool)}, 201, &env)
@@ -499,11 +518,8 @@ func TestMultiUser(t *testing.T) {
 	bob.do("PUT", "/api/v1/images/base", ImageInput{Image: "x"}, 403, nil)
 	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "a2", Image: "alice-img", Running: new(bool)}, 201, nil)
 
-	// Class access.
-	lan := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "lan"}, Spec: devenvv1.DevEnvironmentClassSpec{Access: devenvv1.Access{Groups: []string{"dev"}}}}
-	if err := h.c.Create(t.Context(), lan); err != nil {
-		t.Fatal(err)
-	}
+	// Class access (configuration).
+	h.cat.SetClass("lan", model.ClassSpec{Access: model.Access{Groups: []string{"dev"}}})
 	var classes []Class
 	bob.do("GET", "/api/v1/classes", nil, 200, &classes)
 	if len(classes) != 1 {
@@ -511,8 +527,7 @@ func TestMultiUser(t *testing.T) {
 	}
 	bob.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "b3", Image: "base", Class: "lan", Running: new(bool)}, 400, nil)
 	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "a3", Image: "base", Class: "lan", Running: new(bool)}, 201, nil)
-	bob.do("PUT", "/api/v1/classes/lan/access", AccessInput{}, 403, nil)
-	h.do("PUT", "/api/v1/classes/lan/access", AccessInput{Users: []string{"bob"}}, 200, nil)
+	h.cat.SetClass("lan", model.ClassSpec{Access: model.Access{Groups: []string{"dev"}, Users: []string{"bob"}}})
 	bob.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "b3", Image: "base", Class: "lan", Running: new(bool)}, 201, nil)
 
 	// Admin endpoints.
@@ -530,7 +545,7 @@ func TestMultiUser(t *testing.T) {
 func TestUserLimits(t *testing.T) {
 	h := newHarness(t)
 	h.srv.Config.Users.DefaultLimits = config.Limits{MaxEnvironments: 2, MaxRunning: 1, CPU: "3", Disk: "30Gi"}
-	alice := h.as("alice", devenvv1.RoleUser)
+	alice := h.as("alice", model.RoleUser)
 	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "a1", Image: "base"}, 201, nil) // 2 CPU, 10Gi
 	rec := alice.raw("POST", "/api/v1/environments", `{"name":"a2","image":"base"}`, true)
 	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "at most 1 environments at once") {
@@ -560,7 +575,7 @@ func TestUserLimits(t *testing.T) {
 
 func TestTokens(t *testing.T) {
 	h := newHarness(t)
-	alice := h.as("alice", devenvv1.RoleUser)
+	alice := h.as("alice", model.RoleUser)
 	var created struct {
 		Token tokens.Token `json:"token"`
 		Value string       `json:"value"`
@@ -618,58 +633,17 @@ func TestTokens(t *testing.T) {
 	h.do("DELETE", "/api/v1/admin/tokens/"+list[0].ID, nil, 204, nil)
 }
 
-func TestMigrate(t *testing.T) {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "devenv-user-abc",
-			Labels:      map[string]string{"devenv.tinyrack.net/component": "user"},
-			Annotations: map[string]string{"devenv.tinyrack.net/user": "admin"}},
-		Data: map[string]string{"keys.json": `[{"name":"laptop","publicKey":"` + testKey + `","createdAt":"2026-01-01T00:00:00Z"}]`},
-	}
-	mcpEnv := &devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "agent1"}, Spec: devenvv1.DevEnvironmentSpec{Owner: "mcp", ImageRef: "base"}}
-	adminEnv := &devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Namespace: "devenv", Name: "mine"}, Spec: devenvv1.DevEnvironmentSpec{Owner: "admin", ImageRef: "base"}}
-	h := newHarness(t, cm, mcpEnv, adminEnv)
-	for range 2 { // idempotent
-		if err := h.srv.Users.Migrate(t.Context(), h.c, "devenv"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	u := &devenvv1.DevUser{}
-	if err := h.c.Get(t.Context(), client.ObjectKey{Name: "admin"}, u); err != nil || !u.IsAdmin() || len(u.Spec.SSHKeys) != 1 {
-		t.Fatalf("admin user %+v %v", u.Spec, err)
-	}
-	if err := h.c.Get(t.Context(), client.ObjectKeyFromObject(cm), &corev1.ConfigMap{}); err == nil {
-		t.Fatal("ConfigMap not removed")
-	}
-	e := &devenvv1.DevEnvironment{}
-	_ = h.c.Get(t.Context(), client.ObjectKeyFromObject(mcpEnv), e)
-	if e.Spec.Owner != "admin" || e.Labels[devenvv1.LabelOwner] != "admin" {
-		t.Fatalf("mcp env %+v %v", e.Spec.Owner, e.Labels)
-	}
-	var keys []SSHKey
-	h.do("GET", "/api/v1/sshkeys", nil, 200, &keys)
-	if len(keys) != 1 || keys[0].Name != "laptop" {
-		t.Fatalf("keys %+v", keys)
-	}
-}
-
 func TestChangeClass(t *testing.T) {
 	sc := "longhorn"
 	other := "fast"
-	lan := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "lan"}, Spec: devenvv1.DevEnvironmentClassSpec{
-		Network: devenvv1.NetworkSpec{Mode: devenvv1.NetworkModeLoadBalancer}, Access: devenvv1.Access{Groups: []string{"lan-users"}}}}
-	def := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Spec: devenvv1.DevEnvironmentClassSpec{
-		Storage: devenvv1.StorageSpec{StorageClassName: &sc}, Limits: devenvv1.Limits{MaxCPU: qp("6")}}}
-	lan.Spec.Storage.StorageClassName = &sc
-	fast := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "fast"}, Spec: devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{StorageClassName: &other}}}
-	eph := &devenvv1.DevEnvironmentClass{ObjectMeta: metav1.ObjectMeta{Name: "eph"}, Spec: devenvv1.DevEnvironmentClassSpec{Storage: devenvv1.StorageSpec{Mode: devenvv1.StorageModeEphemeral}}}
-	h := newHarness(t, lan, fast, eph)
-	// The harness default class has no storage class; replace it.
-	cur := &devenvv1.DevEnvironmentClass{}
-	_ = h.c.Get(t.Context(), client.ObjectKey{Name: "default"}, cur)
-	cur.Spec = def.Spec
-	_ = h.c.Update(t.Context(), cur)
+	h := newHarness(t)
+	h.cat.SetClass("lan", model.ClassSpec{Storage: model.StorageSpec{StorageClassName: &sc},
+		Network: model.NetworkSpec{Mode: model.NetworkModeLoadBalancer}, Access: model.Access{Groups: []string{"lan-users"}}})
+	h.cat.SetClass("default", model.ClassSpec{Storage: model.StorageSpec{StorageClassName: &sc}, Limits: model.Limits{MaxCPU: qp("6")}})
+	h.cat.SetClass("fast", model.ClassSpec{Storage: model.StorageSpec{StorageClassName: &other}})
+	h.cat.SetClass("eph", model.ClassSpec{Storage: model.StorageSpec{Mode: model.StorageModeEphemeral}})
 
-	alice := h.as("alice", devenvv1.RoleUser)
+	alice := h.as("alice", model.RoleUser)
 	alice.do("POST", "/api/v1/environments", CreateEnvironmentRequest{Name: "w", Image: "base", Running: new(bool)}, 201, nil)
 	for _, tc := range []struct {
 		class, msg string
@@ -681,7 +655,7 @@ func TestChangeClass(t *testing.T) {
 		}
 	}
 	// With access to lan the move works.
-	alice = h.as("alice", devenvv1.RoleUser, "lan-users")
+	alice = h.as("alice", model.RoleUser, "lan-users")
 	var env Environment
 	alice.do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Class: new("lan")}, 200, &env)
 	if env.Class != "lan" {
@@ -689,5 +663,5 @@ func TestChangeClass(t *testing.T) {
 	}
 	// Shared users can not move it.
 	alice.do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Sharing: &AccessInput{Users: []string{"bob"}}}, 200, nil)
-	h.as("bob", devenvv1.RoleUser, "lan-users").do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Class: new("default")}, 403, nil)
+	h.as("bob", model.RoleUser, "lan-users").do("PATCH", "/api/v1/environments/w", UpdateEnvironmentRequest{Class: new("default")}, 403, nil)
 }

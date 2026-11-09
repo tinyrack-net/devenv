@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/agent"
 )
 
@@ -53,7 +53,7 @@ func pct(used, total uint64) int {
 }
 
 // diagnostics gathers pod state, events and (when running) helper stats.
-func (s *Server) diagnostics(ctx context.Context, env *devenvv1.DevEnvironment) *Diagnostics {
+func (s *Server) diagnostics(ctx context.Context, env *model.Environment) *Diagnostics {
 	d := &Diagnostics{}
 	if st := s.containerStatus(ctx, env.Name); st != nil {
 		d.Restarts = st.RestartCount
@@ -63,7 +63,7 @@ func (s *Server) diagnostics(ctx context.Context, env *devenvv1.DevEnvironment) 
 	}
 	d.Warnings = s.recentWarnings(ctx, env.Name)
 
-	if env.Status.Phase == devenvv1.PhaseRunning {
+	if env.Status.Phase == model.PhaseRunning {
 		sc, release, err := s.connect(ctx, env.Name, false)
 		if err == nil {
 			st, err := callHelper[agent.StatsResult](ctx, sc, "stats", agent.StatsRequest{Path: homeDir}, 15*time.Second)

@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 func q(s string) resource.Quantity { return resource.MustParse(s) }
@@ -71,7 +71,7 @@ func TestReport(t *testing.T) {
 			return p
 		}(),
 	)
-	rep, err := c.Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, nil)
+	rep, err := c.Report(context.Background(), &model.ClassSpec{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestReport(t *testing.T) {
 	}
 
 	// Excluding p1 frees node a.
-	rep, _ = c.Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, &Exclude{Namespace: "x", Name: "p1"})
+	rep, _ = c.Report(context.Background(), &model.ClassSpec{}, &Exclude{Namespace: "x", Name: "p1"})
 	if err := rep.Fits(q("8"), q("16Gi")); err != nil {
 		t.Errorf("excluded pod should be given back: %v", err)
 	}
@@ -105,12 +105,12 @@ func TestClassSelectorsAndLimits(t *testing.T) {
 			n.Spec.Taints = []corev1.Taint{{Key: "gpu", Effect: corev1.TaintEffectNoSchedule}}
 		}),
 	)
-	class := &devenvv1.DevEnvironmentClassSpec{
-		Scheduling: devenvv1.SchedulingSpec{
+	class := &model.ClassSpec{
+		Scheduling: model.SchedulingSpec{
 			NodeSelector: map[string]string{"pool": "gpu"},
 			Tolerations:  []corev1.Toleration{{Key: "gpu", Operator: corev1.TolerationOpExists}},
 		},
-		Limits: devenvv1.Limits{MaxCPU: qp("16"), MaxDisk: qp("100Gi")},
+		Limits: model.Limits{MaxCPU: qp("16"), MaxDisk: qp("100Gi")},
 	}
 	rep, err := c.Report(context.Background(), class, nil)
 	if err != nil {
@@ -139,21 +139,21 @@ func TestQuota(t *testing.T) {
 		},
 	}
 	c := checker("devenv", node("a", "32", "64Gi"), quota, pod("devenv", "me", "a", "2", "1Gi"))
-	rep, err := c.Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, nil)
+	rep, err := c.Report(context.Background(), &model.ClassSpec{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rep.Max.CPU.Cmp(q("1")) != 0 {
 		t.Errorf("quota should cap cpu at 1, got %s", rep.Max.CPU.String())
 	}
-	rep, _ = c.Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, &Exclude{Namespace: "devenv", Name: "me"})
+	rep, _ = c.Report(context.Background(), &model.ClassSpec{}, &Exclude{Namespace: "devenv", Name: "me"})
 	if rep.Max.CPU.Cmp(q("3")) != 0 {
 		t.Errorf("excluded pod should return quota, got %s", rep.Max.CPU.String())
 	}
 }
 
 func TestNoNodes(t *testing.T) {
-	rep, _ := checker("").Report(context.Background(), &devenvv1.DevEnvironmentClassSpec{}, nil)
+	rep, _ := checker("").Report(context.Background(), &model.ClassSpec{}, nil)
 	if err := rep.Fits(q("1"), q("1Gi")); err == nil {
 		t.Errorf("expected no node error")
 	}

@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { formatBytes, formatCPU } from "../../lib/quantity";
 import { PageHeader } from "../../components/Layout";
-import { CopyField, ErrorAlert, Loading } from "../../components/ui";
+import { Confirm, CopyField, ErrorAlert, Loading } from "../../components/ui";
 import { AdminOnly } from "./AdminOnly";
 
 export function AdminSystemPage() {
@@ -67,8 +68,11 @@ export function AdminSystemPage() {
               <dd className="font-mono-tight break-all">{d.helperImage || "disabled"}</dd>
               <dt className="text-base-content/60">Namespace</dt>
               <dd>{d.namespace}</dd>
+              <dt className="text-base-content/60">Database</dt>
+              <dd>{d.database}</dd>
             </dl>
           </section>
+          <Orphans />
           <section className="min-w-0 rounded-box bg-base-100 p-4 sm:p-5">
             <h2 className="mb-3 font-semibold">Configuration</h2>
             <CopyField value={JSON.stringify(d.config, null, 2)} />
@@ -76,5 +80,54 @@ export function AdminSystemPage() {
         </div>
       )}
     </AdminOnly>
+  );
+}
+
+/** Kubernetes objects of environments the database does not know. */
+function Orphans() {
+  const qc = useQueryClient();
+  const orphans = useQuery({ queryKey: ["admin", "orphans"], queryFn: api.orphans });
+  const [target, setTarget] = useState<string | null>(null);
+  const del = useMutation({
+    mutationFn: (name: string) => api.deleteOrphan(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "orphans"] });
+      setTarget(null);
+    },
+  });
+  if (!orphans.data?.length) return null;
+  return (
+    <section className="min-w-0 rounded-box bg-base-100 p-4 sm:p-5">
+      <h2 className="mb-1 font-semibold">Orphaned objects</h2>
+      <p className="mb-3 text-sm text-base-content/60">
+        Objects of environments without a database record, for example after restoring the database to an earlier point. They are never deleted automatically.
+        Create an environment with the same name to adopt the home volume, or delete them.
+      </p>
+      <ErrorAlert error={del.error} />
+      <table className="table table-sm table-stack">
+        <tbody>
+          {orphans.data.map((o) => (
+            <tr key={o.name}>
+              <td className="font-medium">{o.name}</td>
+              <td className="font-mono-tight text-xs text-base-content/70">{o.objects.join(", ")}</td>
+              <td className="text-right">
+                <button className="btn btn-ghost btn-xs text-error" onClick={() => setTarget(o.name)}>
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Confirm
+        open={!!target}
+        onClose={() => setTarget(null)}
+        title={`Delete the objects of ${target}, including its home volume?`}
+        danger
+        confirmLabel="Delete"
+        busy={del.isPending}
+        onConfirm={() => target && del.mutate(target)}
+      />
+    </section>
   );
 }

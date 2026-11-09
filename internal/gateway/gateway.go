@@ -24,7 +24,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 
@@ -35,8 +35,8 @@ type Gateway struct {
 	Addr    string
 	HostKey ssh.Signer
 	Dialer  *sshclient.Dialer
-	// Users lists DevUsers for key authentication. Optional.
-	Users func(ctx context.Context) ([]devenvv1.DevUser, error)
+	// Users lists users for key authentication. Optional.
+	Users func(ctx context.Context) ([]model.User, error)
 	// Banner is shown before authentication. Optional.
 	Banner string
 
@@ -102,7 +102,7 @@ func (g *Gateway) authorize(ctx context.Context, user string, key ssh.PublicKey)
 	lines := env.Spec.SSHAuthorizedKeys
 	if g.Users != nil {
 		if users, err := g.Users(ctx); err == nil {
-			lines = append(append([]string{}, lines...), devenvv1.AccessKeys(users, env)...)
+			lines = append(append([]string{}, lines...), model.AccessKeys(users, env)...)
 		}
 	}
 	for _, line := range lines {

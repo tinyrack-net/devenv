@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tinyrack-net/devenv/internal/store"
 	"k8s.io/apimachinery/pkg/api/resource"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/ptr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/api"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 // toolError is returned to the agent as a tool error (IsError result).
@@ -56,14 +56,14 @@ type Environment struct {
 	SSH          string             `json:"ssh,omitempty" jsonschema:"command to connect over SSH"`
 }
 
-func (s *Server) view(e *devenvv1.DevEnvironment) Environment {
+func (s *Server) view(e *model.Environment) Environment {
 	a := api.ToEnvironment(e)
 	out := Environment{
 		Name: a.Name, Image: a.Image, Class: a.Class, Phase: a.Phase, Message: a.Message,
 		Running: a.Running, Resources: effective(a), Desktop: a.Desktop, NetworkMode: a.NetworkMode,
 		IP: a.IP, Ports: a.Ports, CreatedAt: a.CreatedAt,
 		Owner:        e.Spec.Owner,
-		CreatedByMCP: e.Labels[LabelCreatedBy] == "mcp",
+		CreatedByMCP: e.CreatedBy == api.CreatedByMCP,
 	}
 	if a.IP != "" {
 		out.SSH = "ssh dev@" + a.IP
@@ -205,7 +205,7 @@ func (s *Server) register(srv *mcp.Server) {
 		logged("get_capacity", func(ctx context.Context, _ *mcp.CallToolRequest, in capacityIn) (*mcp.CallToolResult, capacityOut, error) {
 			class := in.Class
 			if class == "" {
-				class = devenvv1.DefaultClassName
+				class = model.DefaultClassName
 			}
 			c, err := s.API.ClassCapacity(ctx, who(ctx), class, "")
 			if err != nil {
@@ -230,7 +230,7 @@ func (s *Server) register(srv *mcp.Server) {
 			}
 			out := []Environment{}
 			for i := range envs {
-				if in.CreatedByMCPOnly && envs[i].Labels[LabelCreatedBy] != "mcp" {
+				if in.CreatedByMCPOnly && envs[i].CreatedBy != api.CreatedByMCP {
 					continue
 				}
 				if !in.All && envs[i].Spec.Owner != p.Name && !sharedWith(p, &envs[i]) {
@@ -264,7 +264,7 @@ func (s *Server) register(srv *mcp.Server) {
 			Resources: api.ResourcesInput{CPU: in.CPU, Memory: in.Memory, Disk: in.Disk},
 			Ports:     in.Ports,
 		}, api.CreateOptions{
-			Labels: map[string]string{LabelCreatedBy: "mcp"},
+			CreatedBy: api.CreatedByMCP,
 		})
 		if err != nil {
 			return nil, envOut{}, userErr(err)
@@ -382,11 +382,11 @@ func (s *Server) register(srv *mcp.Server) {
 
 // getEnv reads an environment, tolerating informer cache lag right after
 // creation (agents often act on an environment immediately).
-func (s *Server) getEnv(ctx context.Context, name string) (*devenvv1.DevEnvironment, error) {
+func (s *Server) getEnv(ctx context.Context, name string) (*model.Environment, error) {
 	start := time.Now()
 	for {
 		env, err := s.API.GetEnvironment(ctx, who(ctx), name)
-		if err == nil || !apierrors.IsNotFound(err) || time.Since(start) > 3*time.Second || ctx.Err() != nil {
+		if err == nil || !errors.Is(err, store.ErrNotFound) || time.Since(start) > 3*time.Second || ctx.Err() != nil {
 			return env, err
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -421,7 +421,7 @@ var WaitLimit = 3 * time.Minute
 
 // waitSoft waits up to WaitLimit. When the environment is not ready yet it
 // returns its current state with a note instead of an error.
-func (s *Server) waitSoft(ctx context.Context, name string, running bool) (*devenvv1.DevEnvironment, string, error) {
+func (s *Server) waitSoft(ctx context.Context, name string, running bool) (*model.Environment, string, error) {
 	env, err := s.waitFor(ctx, name, running, WaitLimit)
 	var te *timeoutError
 	if errors.As(err, &te) {
@@ -441,14 +441,14 @@ func msgSuffix(m string) string {
 	return ": " + m
 }
 
-type timeoutError struct{ env *devenvv1.DevEnvironment }
+type timeoutError struct{ env *model.Environment }
 
 func (e *timeoutError) Error() string {
 	return fmt.Sprintf("timed out waiting for environment %s (phase %s%s); check again with get_environment", e.env.Name, e.env.Status.Phase, msgSuffix(e.env.Status.Message))
 }
 
 // waitFor polls until the environment is running (or stopped).
-func (s *Server) waitFor(ctx context.Context, name string, running bool, limit time.Duration) (*devenvv1.DevEnvironment, error) {
+func (s *Server) waitFor(ctx context.Context, name string, running bool, limit time.Duration) (*model.Environment, error) {
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	start := time.Now()
@@ -460,19 +460,19 @@ func (s *Server) waitFor(ctx context.Context, name string, running bool, limit t
 			}
 			// Reads come from the informer cache, which may not have seen a
 			// just created environment yet.
-			if apierrors.IsNotFound(err) && time.Since(start) < 10*time.Second {
+			if errors.Is(err, store.ErrNotFound) && time.Since(start) < 10*time.Second {
 				time.Sleep(200 * time.Millisecond)
 				continue
 			}
 			return nil, userErr(err)
 		}
 		switch {
-		case running && env.Status.Phase == devenvv1.PhaseRunning && env.Status.ObservedGeneration == env.Generation &&
-			(env.Status.NetworkMode == "" || env.Status.NetworkMode == devenvv1.NetworkModeGateway || env.Status.IP != ""):
+		case running && env.Status.Phase == model.PhaseRunning && env.Status.ObservedGeneration == env.Generation &&
+			(env.Status.NetworkMode == "" || env.Status.NetworkMode == model.NetworkModeGateway || env.Status.IP != ""):
 			return env, nil
-		case !running && env.Status.Phase == devenvv1.PhaseStopped:
+		case !running && env.Status.Phase == model.PhaseStopped:
 			return env, nil
-		case running && env.Status.Phase == devenvv1.PhaseFailed:
+		case running && env.Status.Phase == model.PhaseFailed:
 			return nil, errorf("environment %s failed to start: %s", name, env.Status.Message)
 		}
 		select {

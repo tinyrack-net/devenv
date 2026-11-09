@@ -5,7 +5,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 func qstr(q *resource.Quantity) string {
@@ -15,7 +15,7 @@ func qstr(q *resource.Quantity) string {
 	return q.String()
 }
 
-func toResourcesInput(r devenvv1.Resources) ResourcesInput {
+func toResourcesInput(r model.Resources) ResourcesInput {
 	return ResourcesInput{CPU: qstr(r.CPU), Memory: qstr(r.Memory), Disk: qstr(r.Disk)}
 }
 
@@ -33,8 +33,8 @@ func parseQuantity(field, v string) (*resource.Quantity, error) {
 	return &q, nil
 }
 
-func fromResourcesInput(in ResourcesInput) (devenvv1.Resources, error) {
-	var out devenvv1.Resources
+func fromResourcesInput(in ResourcesInput) (model.Resources, error) {
+	var out model.Resources
 	var err error
 	if out.CPU, err = parseQuantity("cpu", in.CPU); err != nil {
 		return out, err
@@ -48,7 +48,7 @@ func fromResourcesInput(in ResourcesInput) (devenvv1.Resources, error) {
 	return out, nil
 }
 
-func toImage(i *devenvv1.DevImage, inUse int) Image {
+func toImage(i *model.Image, inUse int) Image {
 	return Image{
 		Name:             i.Name,
 		Image:            i.Spec.Image,
@@ -61,12 +61,13 @@ func toImage(i *devenvv1.DevImage, inUse int) Image {
 		Access:           toAccessInput(i.Spec.Access),
 		ImagePullPolicy:  string(i.Spec.ImagePullPolicy),
 		DefaultResources: toResourcesInput(i.Spec.DefaultResources),
-		CreatedAt:        i.CreationTimestamp.Time,
+		CreatedAt:        i.CreatedAt,
 		InUse:            inUse,
+		Managed:          i.Managed,
 	}
 }
 
-func toClass(c *devenvv1.DevEnvironmentClass) Class {
+func toClass(c *model.Class) Class {
 	out := Class{
 		Name:        c.Name,
 		StorageMode: string(c.Spec.EffectiveStorageMode()),
@@ -77,7 +78,7 @@ func toClass(c *devenvv1.DevEnvironmentClass) Class {
 			Memory: qstr(c.Spec.Limits.MaxMemory),
 			Disk:   qstr(c.Spec.Limits.MaxDisk),
 		},
-		Default: c.Name == devenvv1.DefaultClassName,
+		Default: c.Name == model.DefaultClassName,
 		Access:  toAccessInput(c.Spec.Access),
 	}
 	if c.Spec.Storage.StorageClassName != nil {
@@ -86,14 +87,14 @@ func toClass(c *devenvv1.DevEnvironmentClass) Class {
 	return out
 }
 
-func toEnvironment(e *devenvv1.DevEnvironment) Environment {
+func toEnvironment(e *model.Environment) Environment {
 	keys := e.Spec.SSHAuthorizedKeys
 	if keys == nil {
 		keys = []string{}
 	}
 	phase := string(e.Status.Phase)
 	if phase == "" {
-		phase = string(devenvv1.PhasePending)
+		phase = string(model.PhasePending)
 	}
 	return Environment{
 		Name:        e.Name,
@@ -112,17 +113,18 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 		MAC:         e.Status.MAC,
 		NetworkMode: string(e.Status.NetworkMode),
 		Ports:       toPortInputs(e.Spec.Ports),
-		PasswordSet: e.Spec.PasswordSecretName != "",
+		PasswordSet: e.PasswordHash != "",
 		SSHKeys:     keys,
-		CreatedAt:   e.CreationTimestamp.Time,
-		Deleting:    !e.DeletionTimestamp.IsZero(),
+		CreatedAt:   e.CreatedAt,
+		Deleting:    e.Deleting,
 		ServiceName: e.Status.ServiceName,
 		Sharing:     toAccessInput(e.Spec.Sharing),
-		CreatedBy:   e.Labels[LabelCreatedBy],
+		CreatedBy:   e.CreatedBy,
+		Reason:      e.Status.Reason,
 	}
 }
 
-func toAccessInput(a devenvv1.Access) AccessInput {
+func toAccessInput(a model.Access) AccessInput {
 	out := AccessInput{Users: a.Users, Groups: a.Groups}
 	if out.Users == nil {
 		out.Users = []string{}
@@ -133,7 +135,7 @@ func toAccessInput(a devenvv1.Access) AccessInput {
 	return out
 }
 
-func toPortInputs(ps []devenvv1.Port) []PortInput {
+func toPortInputs(ps []model.Port) []PortInput {
 	out := make([]PortInput, 0, len(ps))
 	for _, p := range ps {
 		out = append(out, PortInput{Port: p.Port, Protocol: p.Protocol, Name: p.Name})
@@ -141,12 +143,12 @@ func toPortInputs(ps []devenvv1.Port) []PortInput {
 	return out
 }
 
-func fromPortInputs(in []PortInput) ([]devenvv1.Port, error) {
+func fromPortInputs(in []PortInput) ([]model.Port, error) {
 	if len(in) > 64 {
 		return nil, badRequest("at most 64 ports")
 	}
 	seen := map[string]bool{}
-	out := make([]devenvv1.Port, 0, len(in))
+	out := make([]model.Port, 0, len(in))
 	for _, p := range in {
 		proto := p.Protocol
 		if proto == "" {
@@ -163,7 +165,7 @@ func fromPortInputs(in []PortInput) ([]devenvv1.Port, error) {
 			continue
 		}
 		seen[key] = true
-		out = append(out, devenvv1.Port{Port: p.Port, Protocol: proto, Name: p.Name})
+		out = append(out, model.Port{Port: p.Port, Protocol: proto, Name: p.Name})
 	}
 	return out, nil
 }
