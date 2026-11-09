@@ -102,6 +102,7 @@ func toEnvironment(e *devenvv1.DevEnvironment) Environment {
 		ImageRef:    e.Status.Image,
 		Class:       e.ClassName(),
 		Resources:   toResourcesInput(e.Spec.Resources),
+		Effective:   toResourcesInput(e.Status.Resources),
 		Running:     e.IsRunning(),
 		Phase:       phase,
 		Message:     e.Status.Message,

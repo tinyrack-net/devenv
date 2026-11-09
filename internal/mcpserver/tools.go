@@ -60,7 +60,7 @@ func (s *Server) view(e *devenvv1.DevEnvironment) Environment {
 	a := api.ToEnvironment(e)
 	out := Environment{
 		Name: a.Name, Image: a.Image, Class: a.Class, Phase: a.Phase, Message: a.Message,
-		Running: a.Running, Resources: a.Resources, Desktop: a.Desktop, NetworkMode: a.NetworkMode,
+		Running: a.Running, Resources: effective(a), Desktop: a.Desktop, NetworkMode: a.NetworkMode,
 		IP: a.IP, Ports: a.Ports, CreatedAt: a.CreatedAt,
 		Owner:        e.Spec.Owner,
 		CreatedByMCP: e.Labels[LabelCreatedBy] == "mcp",
@@ -71,6 +71,21 @@ func (s *Server) view(e *devenvv1.DevEnvironment) Environment {
 		out.SSH = fmt.Sprintf("ssh -p %d %s@%s", ssh.Port, a.Name, ssh.Host)
 	}
 	return out
+}
+
+// effective returns the applied resources, falling back to the request.
+func effective(a api.Environment) api.ResourcesInput {
+	r := a.Resources
+	if a.Effective.CPU != "" {
+		r.CPU = a.Effective.CPU
+	}
+	if a.Effective.Memory != "" {
+		r.Memory = a.Effective.Memory
+	}
+	if a.Effective.Disk != "" {
+		r.Disk = a.Effective.Disk
+	}
+	return r
 }
 
 type empty struct{}

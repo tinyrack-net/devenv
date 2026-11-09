@@ -100,7 +100,14 @@ export interface Environment {
   owner?: string;
   image: string;
   class: string;
+  /**
+   * Resources are the requested values (empty = image/class default).
+   */
   resources: ResourcesInput;
+  /**
+   * Effective are the resources actually applied, defaults included.
+   */
+  effective: ResourcesInput;
   running: boolean;
   phase: string;
   message?: string;

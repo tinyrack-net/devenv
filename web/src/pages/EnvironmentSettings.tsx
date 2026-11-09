@@ -129,7 +129,7 @@ function Settings({ env }: { env: Environment }) {
                 defaults={{ ...(img?.defaultResources ?? {}), disk: img?.defaultResources.disk ?? klass.defaultDisk }}
                 onChange={setRes}
                 exclude={env.name}
-                minDisk={gib(env.resources.disk)}
+                minDisk={gib(env.resources.disk || env.effective.disk)}
                 persistent={klass.storageMode === "persistent"}
               />
             )}

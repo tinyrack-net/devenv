@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, type Environment, type Process, type PtySession } from "../lib/api";
 import { useInfo, useMe } from "../lib/prefs";
-import { formatBytes } from "../lib/quantity";
+import { envSize } from "../lib/quantity";
 import { useIsMobile } from "../lib/media";
 import { useRegisterCommands, type Command } from "../components/CommandPalette";
 import { ErrorAlert, Loading, PhaseBadge, Spinner, cx } from "../components/ui";
@@ -471,7 +471,7 @@ function Workspace({ env }: { env: Environment }) {
           <span className="truncate font-semibold">{env.name}</span>
           <PhaseBadge phase={env.phase} deleting={env.deleting} />
           <span className="hidden truncate text-xs text-base-content/60 md:inline">
-            {env.image} · {env.resources.cpu ?? "?"} CPU · {env.resources.memory ? formatBytes(env.resources.memory) : "?"}
+            {env.image} · {envSize(env).cpu} CPU · {envSize(env).memory}
             {env.ip && ` · ${env.ip}`}
           </span>
           {env.owner !== me.data?.name && <span className="badge badge-soft badge-sm hidden lg:inline-flex">by {env.owner}</span>}

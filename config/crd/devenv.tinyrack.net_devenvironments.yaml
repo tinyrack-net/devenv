@@ -284,6 +284,37 @@ spec:
               podName:
                 description: PodName of the running environment.
                 type: string
+              resources:
+                description: |-
+                  Resources are the effective resources after applying image and class
+                  defaults to spec.resources.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the number of CPU cores. Used as both request
+                      and limit.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  disk:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      Disk is the size of the persistent home volume.
+                      Ignored when the class uses ephemeral storage.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the amount of memory. Used as both request
+                      and limit.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
               serviceName:
                 description: ServiceName used to reach the environment inside the
                   cluster.

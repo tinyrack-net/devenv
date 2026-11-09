@@ -5,7 +5,7 @@ import { Bot, LayoutGrid, List, Monitor, Plus, Search, Server, Share2, SquareTer
 import { api, type Environment } from "../lib/api";
 import { useInfo, useMe, usePrefs } from "../lib/prefs";
 import { useIsMobile } from "../lib/media";
-import { formatBytes, formatCPU, ratio } from "../lib/quantity";
+import { envSize, formatBytes, formatCPU, ratio } from "../lib/quantity";
 import { sshCommand, sshTargets } from "../lib/connect";
 import { PageHeader } from "../components/Layout";
 import { CopyButton, Empty, ErrorAlert, Loading, Meter, PhaseBadge, cx, timeAgo } from "../components/ui";
@@ -89,8 +89,8 @@ function EnvCard({ env, me }: { env: Environment; me?: string }) {
         </div>
         <OwnerBadges env={env} me={me} />
         <div className="grid grid-cols-3 gap-3">
-          <Spec label="CPU">{env.resources.cpu ?? "default"}</Spec>
-          <Spec label="Memory">{env.resources.memory ? formatBytes(env.resources.memory) : "default"}</Spec>
+          <Spec label="CPU">{envSize(env).cpu}</Spec>
+          <Spec label="Memory">{envSize(env).memory}</Spec>
           <Spec label={env.ip ? "Address" : "Created"}>{env.ip ?? timeAgo(env.createdAt)}</Spec>
         </div>
         {env.message && env.phase !== "Running" && <div className="text-xs text-base-content/60 line-clamp-2">{env.message}</div>}
@@ -166,7 +166,7 @@ export function EnvTable({ envs, me, showOwner }: { envs: Environment[]; me?: st
                 <div className="text-xs text-base-content/50">{env.class}</div>
               </td>
               <td className="text-sm">
-                {env.resources.cpu ?? "-"} CPU · {env.resources.memory ? formatBytes(env.resources.memory) : "-"}
+                {envSize(env).cpu} CPU · {envSize(env).memory}
               </td>
               <td className="font-mono-tight">{env.ip ?? "-"}</td>
               <td className="text-sm">{timeAgo(env.createdAt)}</td>

@@ -95,6 +95,11 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 	}
 	env.Status.Image = rs.image.Spec.Image
 	env.Status.Desktop = rs.image.Spec.Desktop
+	eff := rs.resources()
+	env.Status.Resources = devenvv1.Resources{CPU: &eff.CPU, Memory: &eff.Memory}
+	if rs.storageMode() == devenvv1.StorageModePersistent {
+		env.Status.Resources.Disk = &eff.Disk
+	}
 
 	if err := rs.validate(); err != nil {
 		setPhase(env, devenvv1.PhaseFailed, "InvalidSpec", err.Error())

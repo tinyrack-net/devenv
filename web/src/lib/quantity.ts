@@ -59,3 +59,11 @@ export function ratio(used: string | undefined, limit: string | undefined): numb
   if (!l) return undefined;
   return Math.min(1, u / l);
 }
+
+/** CPU and memory of an environment for display ("2 CPU · 4 GiB"). Uses the
+ * effective values (defaults applied) and falls back to the request. */
+export function envSize(env: { resources: { cpu?: string; memory?: string }; effective?: { cpu?: string; memory?: string } }): { cpu: string; memory: string } {
+  const cpu = env.effective?.cpu || env.resources.cpu;
+  const mem = env.effective?.memory || env.resources.memory;
+  return { cpu: cpu ? `${Number((parseQuantity(cpu) ?? 0).toFixed(2))}` : "-", memory: mem ? formatBytes(mem) : "-" };
+}

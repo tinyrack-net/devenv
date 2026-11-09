@@ -114,6 +114,11 @@ type DevEnvironmentStatus struct {
 	// +optional
 	Desktop bool `json:"desktop,omitempty"`
 
+	// Resources are the effective resources after applying image and class
+	// defaults to spec.resources.
+	// +optional
+	Resources Resources `json:"resources,omitempty"`
+
 	// PodName of the running environment.
 	// +optional
 	PodName string `json:"podName,omitempty"`

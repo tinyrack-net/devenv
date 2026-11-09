@@ -173,6 +173,9 @@ func TestCreatesChildren(t *testing.T) {
 	}
 
 	cur := waitPhase(t, env, devenvv1.PhaseStarting)
+	if r := cur.Status.Resources; r.CPU == nil || r.CPU.String() != "2" || r.Memory.String() != "4Gi" || r.Disk.String() != devenvv1.DefaultDisk {
+		t.Errorf("status resources = %+v, want image defaults", r)
+	}
 	if cur.Status.Image != "ghcr.io/tinyrack-net/devenv-base:latest" || !cur.Status.Desktop {
 		t.Errorf("status image/desktop not populated: %+v", cur.Status)
 	}

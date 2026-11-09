@@ -61,11 +61,14 @@ type ClassDetail struct {
 
 // Environment is the API representation of a DevEnvironment.
 type Environment struct {
-	Name        string         `json:"name"`
-	Owner       string         `json:"owner,omitempty"`
-	Image       string         `json:"image"`
-	Class       string         `json:"class"`
-	Resources   ResourcesInput `json:"resources"`
+	Name  string `json:"name"`
+	Owner string `json:"owner,omitempty"`
+	Image string `json:"image"`
+	Class string `json:"class"`
+	// Resources are the requested values (empty = image/class default).
+	Resources ResourcesInput `json:"resources"`
+	// Effective are the resources actually applied, defaults included.
+	Effective   ResourcesInput `json:"effective"`
 	Running     bool           `json:"running"`
 	Phase       string         `json:"phase"`
 	Message     string         `json:"message,omitempty"`
