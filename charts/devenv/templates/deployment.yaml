@@ -8,9 +8,13 @@ spec:
   {{- $sqlite := eq .Values.database.driver "sqlite" }}
   replicas: {{ if $sqlite }}1{{ else }}{{ .Values.replicaCount }}{{ end }}
   {{- if $sqlite }}
-  # One writer for the SQLite file.
+  # One writer for the SQLite file: the old pod stops before the new one
+  # starts (like Recreate, but upgradable from the default strategy).
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   {{- end }}
   selector:
     matchLabels: {{- include "devenv.selectorLabels" . | nindent 6 }}

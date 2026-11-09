@@ -79,7 +79,7 @@ extraImages: {}              # name -> image spec
 config: {}                   # merged last into devenv.yaml (any field below)
 ```
 
-SQLite runs a single replica (`Recreate` updates). With PostgreSQL `replicaCount`
+SQLite runs a single replica (the old pod stops before the new one starts). With PostgreSQL `replicaCount`
 can be raised; the controller runs on the elected leader.
 
 Register the client at the identity provider with the redirect URL
