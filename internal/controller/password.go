@@ -27,5 +27,3 @@ func HashPassword(pw string) (string, error) {
 func IsBcrypt(h string) bool {
 	return strings.HasPrefix(h, "$2a$") || strings.HasPrefix(h, "$2b$") || strings.HasPrefix(h, "$2y$")
 }
-
-

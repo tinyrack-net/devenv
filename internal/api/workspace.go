@@ -10,11 +10,11 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/access"
 	"github.com/tinyrack-net/devenv/internal/agent"
 	"github.com/tinyrack-net/devenv/internal/controller"
 	"github.com/tinyrack-net/devenv/internal/helper"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
 )
 

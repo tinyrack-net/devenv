@@ -6,10 +6,10 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/access"
 	"github.com/tinyrack-net/devenv/internal/activity"
 	"github.com/tinyrack-net/devenv/internal/auth"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 type activityKey struct{}

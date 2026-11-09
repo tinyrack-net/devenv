@@ -586,7 +586,7 @@ func TestRecovery(t *testing.T) {
 	// an owner reference to the old CRD object).
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: n + "-home", Namespace: testNS,
-			Labels: map[string]string{LabelEnvironment: n, "restored": "yes"},
+			Labels:          map[string]string{LabelEnvironment: n, "restored": "yes"},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "devenv.tinyrack.net/v1alpha1", Kind: "DevEnvironment", Name: n, UID: "00000000-0000-0000-0000-000000000001"}},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},

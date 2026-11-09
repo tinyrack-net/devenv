@@ -6,8 +6,8 @@ package access
 import (
 	"slices"
 
-	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/auth"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 // Level of access to an environment.

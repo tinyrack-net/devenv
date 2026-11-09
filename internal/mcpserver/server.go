@@ -25,7 +25,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/tokens"
 )
 
-
 // Server implements the MCP tools.
 type Server struct {
 	API    *api.Server

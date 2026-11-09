@@ -294,7 +294,6 @@ func main() {
 		}
 	}
 
-
 	if f.httpAddr != "" {
 		sessions, err := auth.NewSessions(serverKeys.SessionKey, cfg.Auth.Session.SecureCookies)
 		if err != nil {

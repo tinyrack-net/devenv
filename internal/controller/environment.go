@@ -197,7 +197,6 @@ func (r *EnvironmentReconciler) ensureHostKey(ctx context.Context, env *model.En
 	return nil
 }
 
-
 func (r *EnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolved) error {
 	users, err := r.DB.ListUsers(ctx)
 	if err != nil {

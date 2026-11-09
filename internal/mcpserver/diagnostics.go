@@ -11,8 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/agent"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 // Diagnostics describe the health of a running environment.

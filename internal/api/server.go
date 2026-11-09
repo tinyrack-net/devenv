@@ -17,8 +17,8 @@ import (
 	"github.com/tinyrack-net/devenv/internal/capacity"
 	"github.com/tinyrack-net/devenv/internal/catalog"
 	"github.com/tinyrack-net/devenv/internal/config"
-	"github.com/tinyrack-net/devenv/internal/store"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
+	"github.com/tinyrack-net/devenv/internal/store"
 	"github.com/tinyrack-net/devenv/internal/tokens"
 	"github.com/tinyrack-net/devenv/internal/users"
 )

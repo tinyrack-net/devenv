@@ -469,4 +469,3 @@ func (s *Server) adminResetVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, s.view(env, access.Manage))
 }
-

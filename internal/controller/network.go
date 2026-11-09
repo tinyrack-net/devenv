@@ -22,7 +22,6 @@ const (
 	defaultMultusInterface = "net1"
 )
 
-
 func lbServiceName(env *model.Environment) string { return env.Name + "-lb" }
 
 // stableMAC returns the MAC of a multus environment: the pinned one, or one

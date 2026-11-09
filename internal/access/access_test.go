@@ -3,8 +3,8 @@ package access
 import (
 	"testing"
 
-	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/auth"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 func TestEnvironment(t *testing.T) {
