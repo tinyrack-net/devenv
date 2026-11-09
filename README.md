@@ -43,4 +43,5 @@ make build-all            # build web console and embed it into bin/devenv
 ## Configuration
 
 See [docs/configuration.md](docs/configuration.md): login methods (local account, OIDC), users,
-sharing, limits and the configuration file.
+sharing, limits and the configuration file. Backups and restores:
+[docs/disaster-recovery.md](docs/disaster-recovery.md).

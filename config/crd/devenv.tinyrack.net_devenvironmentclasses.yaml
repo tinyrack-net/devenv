@@ -1130,6 +1130,11 @@ spec:
               storage:
                 description: StorageSpec configures the home volume.
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations added to home volume PVCs.
+                    type: object
                   defaultSize:
                     anyOf:
                     - type: integer
@@ -1137,6 +1142,13 @@ spec:
                     description: DefaultSize of the home volume.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels added to home volume PVCs, e.g. to select them for backups
+                      (recurring-job-group.longhorn.io/backup: enabled).
+                    type: object
                   mode:
                     default: persistent
                     description: Mode is persistent (PVC) or ephemeral (emptyDir).

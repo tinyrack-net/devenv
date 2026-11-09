@@ -43,6 +43,15 @@ type StorageSpec struct {
 	// DefaultSize of the home volume.
 	// +optional
 	DefaultSize *resource.Quantity `json:"defaultSize,omitempty"`
+
+	// Labels added to home volume PVCs, e.g. to select them for backups
+	// (recurring-job-group.longhorn.io/backup: enabled).
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Annotations added to home volume PVCs.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // LoadBalancerSpec configures loadBalancer network mode.

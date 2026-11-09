@@ -118,11 +118,26 @@ func (r *resolved) desiredSecret(extraKeys ...string) *corev1.Secret {
 }
 
 func (r *resolved) desiredPVC() *corev1.PersistentVolumeClaim {
+	l := map[string]string{}
+	for k, v := range r.class.Spec.Storage.Labels {
+		l[k] = v
+	}
+	for k, v := range labels(r.env, "home") {
+		l[k] = v
+	}
+	var ann map[string]string
+	if len(r.class.Spec.Storage.Annotations) > 0 {
+		ann = map[string]string{}
+		for k, v := range r.class.Spec.Storage.Annotations {
+			ann[k] = v
+		}
+	}
 	return &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName(r.env),
-			Namespace: r.env.Namespace,
-			Labels:    labels(r.env, "home"),
+			Name:        pvcName(r.env),
+			Namespace:   r.env.Namespace,
+			Labels:      l,
+			Annotations: ann,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},

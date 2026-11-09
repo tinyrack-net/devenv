@@ -110,11 +110,41 @@ func (r *DevEnvironmentReconciler) reconcile(ctx context.Context, env *devenvv1.
 		env.Status.IP, env.Status.MAC = "", ""
 	}
 	env.Status.NetworkMode = rs.networkMode()
+	if m := rs.class.Spec.Network.Multus; rs.networkMode() == devenvv1.NetworkModeMultus && m != nil && m.StableMAC && env.Status.StableMAC == "" {
+		// Pin the MAC once. Environments from earlier versions keep the
+		// UID based MAC they already have (and with it their DHCP lease).
+		switch {
+		case env.Annotations[AnnotationStableMAC] != "":
+			env.Status.StableMAC = env.Annotations[AnnotationStableMAC]
+		case env.Status.MAC != "":
+			env.Status.StableMAC = env.Status.MAC
+		default:
+			env.Status.StableMAC = stableMAC(env)
+		}
+	}
 
 	if err := r.ensureSecret(ctx, rs); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure secret: %w", err)
 	}
 	if rs.storageMode() == devenvv1.StorageModePersistent {
+		if env.Annotations[AnnotationAwaitVolume] != "" {
+			// Restoring: the home volume comes from the storage system's
+			// backup. Do not create an empty one; adopt it once it exists.
+			pvc := &corev1.PersistentVolumeClaim{}
+			err := r.Get(ctx, types.NamespacedName{Namespace: env.Namespace, Name: pvcName(env)}, pvc)
+			if apierrors.IsNotFound(err) {
+				setPhase(env, devenvv1.PhasePending, "AwaitingVolume", "waiting for the home volume "+pvcName(env)+" to be restored; remove the annotation "+AnnotationAwaitVolume+" to start with an empty volume")
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			before := env.DeepCopy()
+			delete(env.Annotations, AnnotationAwaitVolume)
+			if err := r.Patch(ctx, env, client.MergeFrom(before)); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		if err := r.ensurePVC(ctx, rs); err != nil {
 			var cm *classMismatchError
 			if errors.As(err, &cm) {
@@ -235,6 +265,27 @@ func (r *DevEnvironmentReconciler) ensurePVC(ctx context.Context, rs *resolved) 
 	}
 	if err != nil {
 		return err
+	}
+	// Adopt the volume (restores recreate the environment with a new UID)
+	// and keep the class labels and annotations in sync.
+	before := obj.DeepCopy()
+	adoptOwner(obj, rs.env)
+	for k, v := range desired.Labels {
+		if obj.Labels == nil {
+			obj.Labels = map[string]string{}
+		}
+		obj.Labels[k] = v
+	}
+	for k, v := range desired.Annotations {
+		if obj.Annotations == nil {
+			obj.Annotations = map[string]string{}
+		}
+		obj.Annotations[k] = v
+	}
+	if !apiequality.Semantic.DeepEqual(before.ObjectMeta, obj.ObjectMeta) {
+		if err := r.Patch(ctx, obj, client.MergeFrom(before)); err != nil {
+			return err
+		}
 	}
 	// The class may have changed; the home volume can not move to another
 	// storage class.
@@ -572,4 +623,33 @@ func strOr(p *string, def string) string {
 		return def
 	}
 	return *p
+}
+
+// adoptOwner points the controller owner reference of obj at env. Objects
+// restored from a backup (or left by an environment recreated under the same
+// name) reference an old UID; without this the garbage collector deletes
+// them as orphans.
+func adoptOwner(obj metav1.Object, env *devenvv1.DevEnvironment) {
+	refs := obj.GetOwnerReferences()
+	out := refs[:0]
+	for _, ref := range refs {
+		if ref.Kind == "DevEnvironment" && ref.Name == env.Name && ref.UID != env.UID {
+			continue
+		}
+		out = append(out, ref)
+	}
+	t, f := true, true
+	found := false
+	for _, ref := range out {
+		if ref.Kind == "DevEnvironment" && ref.UID == env.UID {
+			found = true
+		}
+	}
+	if !found {
+		out = append(out, metav1.OwnerReference{
+			APIVersion: devenvv1.GroupVersion.String(), Kind: "DevEnvironment",
+			Name: env.Name, UID: env.UID, Controller: &t, BlockOwnerDeletion: &f,
+		})
+	}
+	obj.SetOwnerReferences(out)
 }

@@ -68,6 +68,28 @@ users:
   #  disk: 200Gi
   adminLimits: null
 
+# -- Daily export of users, environments, images, class access lists and the
+# Secrets that must survive (server keys, environment host keys and
+# passwords, access tokens). Home volumes are backed up by the storage system:
+# add its selection labels to classes (spec.storage.labels). See
+# docs/disaster-recovery.md.
+backup:
+  enabled: false
+  schedule: "15 3 * * *"
+  # -- file:///path (inside the job pod, e.g. a mounted volume) or
+  # s3://bucket/prefix.
+  dest: ""
+  # -- Number of backups to keep.
+  keep: 14
+  s3:
+    # -- S3 endpoint, e.g. https://s3.example.com (empty: AWS).
+    endpoint: ""
+    region: ""
+    # -- Secret with the access key pair.
+    existingSecret: ""
+    accessKeyIDKey: AWS_ACCESS_KEY_ID
+    secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+
 # -- Extra configuration merged into the generated devenv.yaml (see
 # docs/configuration.md). Values set here win.
 config: {}

@@ -22,12 +22,31 @@ const (
 	defaultMultusInterface = "net1"
 )
 
+// AnnotationAwaitVolume makes the controller wait for an existing home
+// volume (restored from a backup) instead of creating an empty one.
+const AnnotationAwaitVolume = "devenv.tinyrack.net/await-volume"
+
+// AnnotationStableMAC pins the multus MAC of an environment. Backups record
+// it so restores keep the address even for environments created before the
+// MAC was derived from the name.
+const AnnotationStableMAC = "devenv.tinyrack.net/stable-mac"
+
+
 func lbServiceName(env *devenvv1.DevEnvironment) string { return env.Name + "-lb" }
 
 // stableMAC derives a locally administered unicast MAC from the environment
 // UID, so DHCP servers hand out the same lease after restarts.
+// stableMAC returns the MAC of a multus environment. Environments that
+// already have one keep it; new ones derive it from namespace/name (not the
+// UID), so recreating the object from a backup keeps the DHCP lease.
 func stableMAC(env *devenvv1.DevEnvironment) string {
-	sum := sha256.Sum256([]byte(env.UID))
+	if m := env.Status.StableMAC; m != "" {
+		return m
+	}
+	if m := env.Annotations[AnnotationStableMAC]; m != "" {
+		return m
+	}
+	sum := sha256.Sum256([]byte(env.Namespace + "/" + env.Name))
 	mac := net.HardwareAddr(sum[:6])
 	mac[0] = (mac[0] | 0x02) & 0xfe // locally administered, unicast
 	return mac.String()

@@ -319,6 +319,12 @@ spec:
                 description: ServiceName used to reach the environment inside the
                   cluster.
                 type: string
+              stableMAC:
+                description: |-
+                  StableMAC is the MAC used for multus classes with stableMAC. It is
+                  derived from the namespace and name, so a restored environment keeps
+                  its address.
+                type: string
             type: object
         required:
         - spec

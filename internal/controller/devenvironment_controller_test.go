@@ -701,3 +701,98 @@ func TestChangeClass(t *testing.T) {
 		t.Fatal("home volume was replaced")
 	}
 }
+
+// TestRestore simulates a restore: the PVC and SSH Secret exist with owner
+// references to a deleted environment of the same name; the recreated
+// environment adopts them and keeps the host key, volume and MAC.
+func TestRestore(t *testing.T) {
+	sc := "standard"
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{
+		Storage: devenvv1.StorageSpec{StorageClassName: &sc, Labels: map[string]string{"backup": "enabled"}, Annotations: map[string]string{"note": "home"}},
+	}, false)
+	staleUID := types.UID("00000000-0000-0000-0000-000000000001")
+	stale := []metav1.OwnerReference{{APIVersion: devenvv1.GroupVersion.String(), Kind: "DevEnvironment", Name: "rs", UID: staleUID, Controller: new(true)}}
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "rs-home", Namespace: f.ns, OwnerReferences: stale, Labels: map[string]string{"restored": "yes"}},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, StorageClassName: &sc,
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}},
+		},
+	}
+	must(t, k8sClient.Create(testCtx, pvc))
+	priv, pub, err := generateHostKey()
+	must(t, err)
+	must(t, k8sClient.Create(testCtx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rs-ssh", Namespace: f.ns, OwnerReferences: stale},
+		Data:       map[string][]byte{HostKeyFile: priv, HostPublicKeyFile: pub},
+	}))
+
+	env := f.env("rs")
+	env.Annotations = map[string]string{AnnotationStableMAC: "02:aa:bb:cc:dd:ee"}
+	must(t, k8sClient.Create(testCtx, env))
+	eventually(t, func() error {
+		p := &corev1.PersistentVolumeClaim{}
+		if err := get(p, f.ns, "rs-home"); err != nil {
+			return err
+		}
+		if p.UID != pvc.UID {
+			return fmt.Errorf("pvc replaced")
+		}
+		ref := metav1.GetControllerOf(p)
+		if ref == nil || ref.UID != env.UID {
+			return fmt.Errorf("pvc owner %+v", p.OwnerReferences)
+		}
+		if p.Labels["backup"] != "enabled" || p.Labels["restored"] != "yes" || p.Annotations["note"] != "home" {
+			return fmt.Errorf("labels %v annotations %v", p.Labels, p.Annotations)
+		}
+		return nil
+	})
+	eventually(t, func() error {
+		s := &corev1.Secret{}
+		if err := get(s, f.ns, "rs-ssh"); err != nil {
+			return err
+		}
+		if string(s.Data[HostPublicKeyFile]) != string(pub) {
+			return fmt.Errorf("host key regenerated")
+		}
+		if ref := metav1.GetControllerOf(s); ref == nil || ref.UID != env.UID {
+			return fmt.Errorf("secret owner %+v", s.OwnerReferences)
+		}
+		return nil
+	})
+	if got := stableMAC(&devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "y", Annotations: env.Annotations}}); got != "02:aa:bb:cc:dd:ee" {
+		t.Fatalf("pinned MAC %s", got)
+	}
+	a := stableMAC(&devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "y", UID: "1"}})
+	b := stableMAC(&devenvv1.DevEnvironment{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "y", UID: "2"}})
+	if a != b {
+		t.Fatal("MAC depends on the UID")
+	}
+}
+
+func TestAwaitVolume(t *testing.T) {
+	f := newFixture(t, devenvv1.DevEnvironmentClassSpec{}, false)
+	env := f.env("aw")
+	env.Annotations = map[string]string{AnnotationAwaitVolume: "true"}
+	must(t, k8sClient.Create(testCtx, env))
+	cur := waitPhase(t, env, devenvv1.PhasePending)
+	if !strings.Contains(cur.Status.Message, "waiting for the home volume") {
+		t.Fatalf("message %q", cur.Status.Message)
+	}
+	if err := get(&corev1.PersistentVolumeClaim{}, f.ns, "aw-home"); !apierrors.IsNotFound(err) {
+		t.Fatalf("empty volume created while waiting: %v", err)
+	}
+	// The storage system restores the volume.
+	must(t, k8sClient.Create(testCtx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "aw-home", Namespace: f.ns},
+		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}},
+	}))
+	// Touch the environment so it reconciles before the 30s requeue.
+	updateEnv(t, env, func() { env.Labels = map[string]string{"poke": "1"} })
+	eventually(t, func() error { return get(&corev1.Pod{}, f.ns, "aw") })
+	must(t, get(cur, f.ns, "aw"))
+	if cur.Annotations[AnnotationAwaitVolume] != "" {
+		t.Fatal("annotation not removed")
+	}
+}

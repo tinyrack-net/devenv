@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
@@ -61,6 +62,27 @@ func (r *DevEnvironmentReconciler) resolvePassword(ctx context.Context, env *dev
 			return "", "", fmt.Errorf("password secret %q not found", env.Spec.PasswordSecretName)
 		}
 		return "", "", err
+	}
+	// Restored password Secrets reference the UID of the old environment;
+	// point them at this one so they are not garbage collected.
+	if sec.Labels["devenv.tinyrack.net/component"] == "password" {
+		for _, ref := range sec.GetOwnerReferences() {
+			if ref.Kind == "DevEnvironment" && ref.Name == env.Name && ref.UID != env.UID {
+				before := sec.DeepCopy()
+				refs := []metav1.OwnerReference{}
+				for _, r2 := range sec.GetOwnerReferences() {
+					if !(r2.Kind == "DevEnvironment" && r2.Name == env.Name) {
+						refs = append(refs, r2)
+					}
+				}
+				refs = append(refs, metav1.OwnerReference{APIVersion: devenvv1.GroupVersion.String(), Kind: "DevEnvironment", Name: env.Name, UID: env.UID})
+				sec.SetOwnerReferences(refs)
+				if err := r.Patch(ctx, sec, client.MergeFrom(before)); err != nil {
+					return "", "", err
+				}
+				break
+			}
+		}
 	}
 	if h := strings.TrimSpace(string(sec.Data[PasswordHashKey])); h != "" {
 		if !isBcrypt(h) {

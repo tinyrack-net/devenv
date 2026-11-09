@@ -147,6 +147,12 @@ type DevEnvironmentStatus struct {
 	// +optional
 	MAC string `json:"mac,omitempty"`
 
+	// StableMAC is the MAC used for multus classes with stableMAC. It is
+	// derived from the namespace and name, so a restored environment keeps
+	// its address.
+	// +optional
+	StableMAC string `json:"stableMAC,omitempty"`
+
 	// +listType=map
 	// +listMapKey=type
 	// +optional

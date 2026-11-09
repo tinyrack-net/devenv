@@ -1,0 +1,88 @@
+{{- if .Values.backup.enabled }}
+{{- $fullname := include "devenv.fullname" . }}
+{{- if not .Values.backup.dest }}
+{{- fail "backup.dest is required when backup.enabled (file:///path or s3://bucket/prefix)" }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "devenv.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "devenv.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "devenv.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: {{ include "devenv.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - backup
+                - --dest={{ .Values.backup.dest }}
+                - --environment-namespace={{ .Values.environments.namespace }}
+                - --keep={{ .Values.backup.keep }}
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: DEVENV_KEYS_SECRET
+                  value: {{ $fullname }}-keys
+                {{- with .Values.backup.s3.endpoint }}
+                - name: AWS_ENDPOINT_URL
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with .Values.backup.s3.region }}
+                - name: AWS_REGION
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with .Values.backup.s3.existingSecret }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ . }}
+                      key: {{ $.Values.backup.s3.accessKeyIDKey }}
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ . }}
+                      key: {{ $.Values.backup.s3.secretAccessKeyKey }}
+                {{- end }}
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          {{- with .Values.nodeSelector }}
+          nodeSelector: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

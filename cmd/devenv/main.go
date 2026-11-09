@@ -150,6 +150,9 @@ type flags struct {
 }
 
 func main() {
+	if runBackupCommand(os.Args[1:]) {
+		return
+	}
 	var f flags
 	flag.StringVar(&f.configFile, "config", envOr("DEVENV_CONFIG", ""), "Configuration file (YAML). See docs/configuration.md.")
 	flag.StringVar(&f.metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address. \"0\" disables it.")
