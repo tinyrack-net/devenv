@@ -2,8 +2,8 @@ apiVersion: v2
 name: devenv
 description: Remote development environments on Kubernetes
 type: application
-version: 0.10.1
-appVersion: "0.10.1"
+version: 0.11.0
+appVersion: "0.11.0"
 home: https://github.com/tinyrack-net/devenv
 sources:
   - https://github.com/tinyrack-net/devenv
