@@ -115,7 +115,7 @@ export function DesktopView({ env, active, ready }: { env: string; active: boole
 
   return (
     <div className="flex h-full w-full flex-col" ref={wrap}>
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-100 px-2 py-1 text-xs">
+      <div className="no-scrollbar flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-base-300 bg-base-100 px-2 py-1 text-xs">
         <span className={cx("status shrink-0", status === "connected" ? "status-success" : status === "connecting" ? "status-info animate-pulse" : "status-error")} />
         <span className="hidden text-base-content/60 sm:inline">{status}</span>
         <div className="flex-1" />
@@ -184,8 +184,8 @@ export function DesktopView({ env, active, ready }: { env: string; active: boole
           </button>
         )}
       </div>
-      <div className="relative flex-1">
-        <div className="vnc-host" ref={screen} />
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className={cx("vnc-host", scale === "native" && "vnc-native")} ref={screen} />
         {!ready && <div className="absolute inset-0 flex items-center justify-center text-sm text-base-content/60">Waiting for the environment…</div>}
       </div>
     </div>

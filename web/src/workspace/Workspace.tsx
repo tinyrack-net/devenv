@@ -216,14 +216,14 @@ function Workspace({ env }: { env: Environment }) {
     const pane = layout.panes[paneIdx];
     return (
       <div className={cx("flex h-full min-h-0 flex-col", layout.panes.length > 1 && layout.focused === paneIdx && "ring-1 ring-primary/40 ring-inset")} onMouseDown={() => layout.focused !== paneIdx && update((l) => ({ ...l, focused: paneIdx }))}>
-        <div className="flex items-center gap-0.5 overflow-x-auto border-b border-base-300 bg-base-200 px-1">
+        <div className="no-scrollbar flex shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden border-b border-base-300 bg-base-200 px-1">
           {pane.tabs.map((t) => (
             <div
               key={t.key}
               className={cx(
                 "group relative flex shrink-0 cursor-pointer items-center gap-1.5 px-3 py-2 text-sm select-none",
                 pane.active === t.key
-                  ? "bg-base-100 font-medium after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-primary"
+                  ? "bg-base-100 font-medium after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
                   : "text-base-content/60 hover:bg-base-100/50 hover:text-base-content",
               )}
               onClick={() => update((l) => activate(l, t.key))}
@@ -276,7 +276,7 @@ function Workspace({ env }: { env: Environment }) {
               </Menu>
             </div>
           ))}
-          <Menu label="New tab" align="start" triggerClassName="btn btn-ghost btn-xs btn-square shrink-0" className="w-64 text-sm" trigger={<Plus className="size-3.5" />}>
+          <Menu label="New tab" align="start" triggerClassName="btn btn-ghost btn-xs btn-square shrink-0 self-center" className="w-64 text-sm" trigger={<Plus className="size-3.5" />}>
             {(close) => (
               <>
                 <li>
@@ -375,7 +375,7 @@ function Workspace({ env }: { env: Environment }) {
           <PowerButton env={env} className="btn-xs" />
           <EnvMenu env={env} onDeleted={() => navigate("/")} />
         </header>
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-200 px-1 py-1">
+        <div className="no-scrollbar flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-base-300 bg-base-200 px-1 py-1">
           {pane0.map((t) => (
             <div
               key={t.key}

@@ -104,10 +104,31 @@
 .vnc-host {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   background: #1f2328;
 }
+/*
+ * noVNC's own container shows scrollbars when the canvas is a pixel larger
+ * than the view; those change the size it measures and it resizes the remote
+ * screen again, so scrollbars blink. Only "original size" mode scrolls.
+ */
 .vnc-host > div {
   background: transparent !important;
+  overflow: hidden !important;
+}
+.vnc-host.vnc-native > div {
+  overflow: auto !important;
+}
+.vnc-host canvas {
+  display: block;
+}
+
+/* Horizontal strips that scroll without showing a scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 .font-mono-tight {
