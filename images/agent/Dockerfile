@@ -31,7 +31,7 @@ RUN case "${TARGETARCH}" in amd64) a=x64 ;; arm64) a=arm64 ;; esac \
 
 # uv (Python package and project manager)
 RUN case "${TARGETARCH}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac \
-    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-gnu.tar.gz" \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://releases.astral.sh/github/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-gnu.tar.gz" \
        | tar -C /usr/local/bin --strip-components=1 --no-same-owner --no-overwrite-dir -xz
 
 # GitHub CLI
