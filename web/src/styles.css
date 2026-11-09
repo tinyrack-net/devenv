@@ -208,3 +208,9 @@
   outline-color: color-mix(in oklab, var(--color-primary) 40%, transparent) !important;
   outline-offset: 1px !important;
 }
+
+/* react-resizable-panels sets overflow:auto on panel content; the views
+   inside manage their own scrolling. */
+[data-panel] > div {
+  overflow: hidden !important;
+}

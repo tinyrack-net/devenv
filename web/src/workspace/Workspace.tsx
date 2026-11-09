@@ -520,16 +520,16 @@ function Workspace({ env }: { env: Environment }) {
         {/* Main area */}
         <div className="min-w-0 flex-1">
           <Group orientation="horizontal" className="h-full">
-            <Panel id="main" minSize="30">
+            <Panel id="main" minSize="30" style={{ overflow: "hidden" }}>
               {layout.panes.length === 1 ? (
                 paneView(0)
               ) : (
                 <Group orientation={layout.split === "horizontal" ? "horizontal" : "vertical"} className="h-full">
-                  <Panel id="p0" minSize="15">
+                  <Panel id="p0" minSize="15" style={{ overflow: "hidden" }}>
                     {paneView(0)}
                   </Panel>
                   <Separator className={cx("resize-handle", layout.split === "horizontal" ? "w-1" : "h-1")} />
-                  <Panel id="p1" minSize="15">
+                  <Panel id="p1" minSize="15" style={{ overflow: "hidden" }}>
                     {paneView(1)}
                   </Panel>
                 </Group>
@@ -538,7 +538,7 @@ function Workspace({ env }: { env: Environment }) {
             {sideOpen && (
               <>
                 <Separator className="resize-handle w-1" />
-                <Panel id="side" defaultSize="26" minSize="16" maxSize="50">
+                <Panel id="side" defaultSize="26" minSize="16" maxSize="50" style={{ overflow: "hidden" }}>
                   <div className="flex h-full flex-col border-l border-base-300 bg-base-100">
                     {sideHeader}
                     <div className="min-h-0 flex-1 overflow-y-auto">{sideContent}</div>
