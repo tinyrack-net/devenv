@@ -3,6 +3,7 @@ import RFB from "@novnc/novnc";
 import { ClipboardPaste, Eye, Expand, Keyboard, MousePointer2, RotateCw, Scaling, SlidersHorizontal } from "lucide-react";
 import { wsURL } from "../lib/api";
 import { cx } from "../components/ui";
+import { Menu } from "../components/Menu";
 
 type Scale = "fit" | "remote" | "native";
 
@@ -122,47 +123,55 @@ export function DesktopView({ env, active, ready }: { env: string; active: boole
           {viewOnly ? <Eye className="size-3.5" /> : <MousePointer2 className="size-3.5" />}
           <span className="hidden sm:inline">{viewOnly ? "Watching" : "Control"}</span>
         </button>
-        <div className="dropdown dropdown-end">
-          <div tabIndex={0} role="button" className="btn btn-ghost btn-xs" title="Scaling">
-            <Scaling className="size-3.5" /> <span className="hidden sm:inline">{scale === "remote" ? "Resize remote" : scale === "fit" ? "Fit" : "1:1"}</span>
-          </div>
-          <ul tabIndex={0} className="dropdown-content menu z-30 w-56 rounded-box bg-base-100 p-2 shadow-lg">
-            <li>
-              <button onClick={() => setScale("remote")}>Resize remote to window</button>
+        <Menu
+          label="Scaling"
+          triggerClassName="btn btn-ghost btn-xs"
+          className="w-56"
+          trigger={
+            <>
+              <Scaling className="size-3.5" /> <span className="hidden sm:inline">{scale === "remote" ? "Resize remote" : scale === "fit" ? "Fit" : "1:1"}</span>
+            </>
+          }
+        >
+          {(close) => (
+            <>
+              {([
+                ["remote", "Resize remote to window"],
+                ["fit", "Scale to fit"],
+                ["native", "Original size (scroll)"],
+              ] as [Scale, string][]).map(([v, label]) => (
+                <li key={v}>
+                  <button className={cx(scale === v && "menu-active")} onClick={() => { close(); setScale(v); }}>
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </>
+          )}
+        </Menu>
+        <Menu label="Quality" triggerClassName="btn btn-ghost btn-xs" className="w-56 p-3!" trigger={<SlidersHorizontal className="size-3.5" />}>
+          {() => (
+            <li className="block">
+              <div className="mb-1 text-xs">Image quality · {quality}</div>
+              <input type="range" min={0} max={9} value={quality} className="range range-xs" onChange={(e) => setQuality(Number(e.target.value))} />
+              <div className="mt-1 text-xs text-base-content/50">Lower is faster on slow links.</div>
             </li>
-            <li>
-              <button onClick={() => setScale("fit")}>Scale to fit</button>
-            </li>
-            <li>
-              <button onClick={() => setScale("native")}>Original size (scroll)</button>
-            </li>
-          </ul>
-        </div>
-        <div className="dropdown dropdown-end">
-          <div tabIndex={0} role="button" className="btn btn-ghost btn-xs" title="Quality">
-            <SlidersHorizontal className="size-3.5" />
-          </div>
-          <div tabIndex={0} className="dropdown-content z-30 w-56 rounded-box bg-base-100 p-3 shadow-lg">
-            <div className="mb-1 text-xs">Image quality · {quality}</div>
-            <input type="range" min={0} max={9} value={quality} className="range range-xs" onChange={(e) => setQuality(Number(e.target.value))} />
-            <div className="mt-1 text-xs text-base-content/50">Lower is faster on slow links.</div>
-          </div>
-        </div>
-        <div className="dropdown dropdown-end">
-          <div tabIndex={0} role="button" className="btn btn-ghost btn-xs" title="Send keys">
-            <Keyboard className="size-3.5" />
-          </div>
-          <ul tabIndex={0} className="dropdown-content menu z-30 w-44 rounded-box bg-base-100 p-2 shadow-lg">
-            {keys.map((k) => (
-              <li key={k.label}>
-                <button onClick={() => sendKey(k)}>{k.label}</button>
+          )}
+        </Menu>
+        <Menu label="Send keys" triggerClassName="btn btn-ghost btn-xs" className="w-44" trigger={<Keyboard className="size-3.5" />}>
+          {(close) => (
+            <>
+              {keys.map((k) => (
+                <li key={k.label}>
+                  <button onClick={() => { close(); sendKey(k); }}>{k.label}</button>
+                </li>
+              ))}
+              <li>
+                <button onClick={() => { close(); rfbRef.current?.sendCtrlAltDel(); }}>Ctrl+Alt+Del</button>
               </li>
-            ))}
-            <li>
-              <button onClick={() => rfbRef.current?.sendCtrlAltDel()}>Ctrl+Alt+Del</button>
-            </li>
-          </ul>
-        </div>
+            </>
+          )}
+        </Menu>
         <button className="btn btn-ghost btn-xs" onClick={paste} title="Paste local clipboard into the desktop">
           <ClipboardPaste className="size-3.5" />
         </button>

@@ -28,6 +28,7 @@ import { useIsMobile } from "../lib/media";
 import { useRegisterCommands, type Command } from "../components/CommandPalette";
 import { ErrorAlert, Loading, PhaseBadge, Spinner, cx } from "../components/ui";
 import { ThemeSwitch, UserMenu } from "../components/Layout";
+import { Menu } from "../components/Menu";
 import { EnvMenu, PowerButton } from "../components/EnvActions";
 import { TerminalView } from "./TerminalView";
 import { DesktopView } from "./DesktopView";
@@ -237,65 +238,69 @@ function Workspace({ env }: { env: Environment }) {
             >
               {t.kind === "terminal" ? <SquareTerminal className="size-3.5" /> : t.kind === "desktop" ? <Monitor className="size-3.5" /> : <ScrollText className="size-3.5" />}
               <span className="max-w-40 truncate">{t.title}</span>
-              <div className="dropdown dropdown-bottom">
-                <button tabIndex={0} className="btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100 pointer-coarse:opacity-60" onClick={(e) => e.stopPropagation()} title="Close">
-                  <X className="size-3" />
-                </button>
-                {t.kind === "terminal" ? (
-                  <ul tabIndex={0} className="dropdown-content menu z-40 w-60 rounded-box bg-base-100 p-1 text-xs font-normal shadow-lg">
-                    <li>
-                      <button onClick={(e) => { e.stopPropagation(); closeTerminalTab(t, false); }}>Close tab (keep shell running)</button>
-                    </li>
-                    <li>
-                      <button className="text-error" onClick={(e) => { e.stopPropagation(); closeTerminalTab(t, true); }}>
-                        Close and end the shell
-                      </button>
-                    </li>
-                    <li>
-                      <button onClick={(e) => { e.stopPropagation(); update((l) => moveToOtherPane(l, t.key)); }}>Move to other pane</button>
-                    </li>
-                  </ul>
-                ) : (
-                  <ul tabIndex={0} className="dropdown-content menu z-40 w-48 rounded-box bg-base-100 p-1 text-xs font-normal shadow-lg">
-                    <li>
-                      <button onClick={(e) => { e.stopPropagation(); update((l) => closeTab(l, t.key)); }}>Close</button>
-                    </li>
-                    <li>
-                      <button onClick={(e) => { e.stopPropagation(); update((l) => moveToOtherPane(l, t.key)); }}>Move to other pane</button>
-                    </li>
-                  </ul>
-                )}
-              </div>
+              <Menu
+                label={`Close ${t.title}`}
+                align="start"
+                triggerClassName="btn btn-ghost btn-xs btn-square opacity-0 group-hover:opacity-100 pointer-coarse:opacity-60 aria-expanded:opacity-100"
+                className="w-60 text-xs font-normal"
+                trigger={<X className="size-3" />}
+              >
+                {(close) =>
+                  t.kind === "terminal" ? (
+                    <>
+                      <li>
+                        <button onClick={() => { close(); closeTerminalTab(t, false); }}>Close tab (keep shell running)</button>
+                      </li>
+                      <li>
+                        <button className="text-error" onClick={() => { close(); closeTerminalTab(t, true); }}>
+                          Close and end the shell
+                        </button>
+                      </li>
+                      <li>
+                        <button onClick={() => { close(); update((l) => moveToOtherPane(l, t.key)); }}>Move to other pane</button>
+                      </li>
+                    </>
+                  ) : (
+                    <>
+                      <li>
+                        <button onClick={() => { close(); update((l) => closeTab(l, t.key)); }}>Close</button>
+                      </li>
+                      <li>
+                        <button onClick={() => { close(); update((l) => moveToOtherPane(l, t.key)); }}>Move to other pane</button>
+                      </li>
+                    </>
+                  )
+                }
+              </Menu>
             </div>
           ))}
-          <div className="dropdown dropdown-bottom">
-            <button tabIndex={0} className="btn btn-ghost btn-xs btn-square" title="New tab">
-              <Plus className="size-3.5" />
-            </button>
-            <ul tabIndex={0} className="dropdown-content menu z-40 w-64 rounded-box bg-base-100 p-1 text-sm shadow-lg">
-              <li>
-                <button onClick={() => openTerminal(undefined, paneIdx)}>
-                  <SquareTerminal className="size-4" /> New terminal <kbd className="kbd kbd-xs ml-auto">⌃⇧T</kbd>
-                </button>
-              </li>
-              {env.desktop && (
+          <Menu label="New tab" align="start" triggerClassName="btn btn-ghost btn-xs btn-square shrink-0" className="w-64 text-sm" trigger={<Plus className="size-3.5" />}>
+            {(close) => (
+              <>
                 <li>
-                  <button onClick={openDesktop}>
-                    <Monitor className="size-4" /> Desktop <kbd className="kbd kbd-xs ml-auto">⌃⇧D</kbd>
+                  <button onClick={() => { close(); openTerminal(undefined, paneIdx); }}>
+                    <SquareTerminal className="size-4" /> New terminal <kbd className="kbd kbd-xs ml-auto">⌃⇧T</kbd>
                   </button>
                 </li>
-              )}
-              {orphanSessions.length > 0 && <li className="menu-title text-xs">Running shells</li>}
-              {orphanSessions.map((s) => (
-                <li key={s.id}>
-                  <button onClick={() => openTerminal(s, paneIdx)}>
-                    <SquareTerminal className="size-4" /> {s.name}
-                    <span className="ml-auto text-xs text-base-content/50">{s.clients > 0 ? `${s.clients} viewing` : "detached"}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+                {env.desktop && (
+                  <li>
+                    <button onClick={() => { close(); openDesktop(); }}>
+                      <Monitor className="size-4" /> Desktop <kbd className="kbd kbd-xs ml-auto">⌃⇧D</kbd>
+                    </button>
+                  </li>
+                )}
+                {orphanSessions.length > 0 && <li className="menu-title text-xs">Running shells</li>}
+                {orphanSessions.map((s) => (
+                  <li key={s.id}>
+                    <button onClick={() => { close(); openTerminal(s, paneIdx); }}>
+                      <SquareTerminal className="size-4" /> {s.name}
+                      <span className="ml-auto text-xs text-base-content/50">{s.clients > 0 ? `${s.clients} viewing` : "detached"}</span>
+                    </button>
+                  </li>
+                ))}
+              </>
+            )}
+          </Menu>
         </div>
         <div className="relative min-h-0 flex-1">
           {pane.tabs.length === 0 && (

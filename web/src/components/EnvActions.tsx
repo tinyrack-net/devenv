@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { EllipsisVertical, Monitor, Play, RotateCw, Settings, Square, SquareTerminal, Trash2 } from "lucide-react";
 import { api, errorMessage, type Environment } from "../lib/api";
 import { Confirm, Spinner, cx } from "./ui";
+import { Menu } from "./Menu";
 import { useToast } from "./toast";
 
 /** Start/stop and other quick actions for an environment. */
@@ -44,44 +45,43 @@ export function EnvMenu({ env, onDeleted }: { env: Environment; onDeleted?: () =
   const manage = env.access === "manage";
   return (
     <>
-      <div className="dropdown dropdown-end">
-        <div tabIndex={0} role="button" className="btn btn-ghost btn-sm btn-square">
-          <EllipsisVertical className="size-4" />
-        </div>
-        <ul tabIndex={0} className="dropdown-content menu z-30 w-52 rounded-box bg-base-100 p-2 shadow-lg">
-          <li>
-            <button onClick={() => navigate(`/env/${env.name}?open=terminal`)}>
-              <SquareTerminal className="size-4" /> New terminal
-            </button>
-          </li>
-          {env.desktop && (
+      <Menu label={`Actions for ${env.name}`} triggerClassName="btn btn-ghost btn-sm btn-square" className="w-52" trigger={<EllipsisVertical className="size-4" />}>
+        {(close) => (
+          <>
             <li>
-              <button onClick={() => navigate(`/env/${env.name}?open=desktop`)}>
-                <Monitor className="size-4" /> Desktop
+              <button onClick={() => { close(); navigate(`/env/${env.name}?open=terminal`); }}>
+                <SquareTerminal className="size-4" /> New terminal
               </button>
             </li>
-          )}
-          {env.running && (
+            {env.desktop && (
+              <li>
+                <button onClick={() => { close(); navigate(`/env/${env.name}?open=desktop`); }}>
+                  <Monitor className="size-4" /> Desktop
+                </button>
+              </li>
+            )}
+            {env.running && (
+              <li>
+                <button onClick={() => { close(); m.restart.mutate(); }}>
+                  <RotateCw className="size-4" /> Restart
+                </button>
+              </li>
+            )}
             <li>
-              <button onClick={() => m.restart.mutate()}>
-                <RotateCw className="size-4" /> Restart
+              <button onClick={() => { close(); navigate(`/env/${env.name}/settings`); }}>
+                <Settings className="size-4" /> Settings
               </button>
             </li>
-          )}
-          <li>
-            <button onClick={() => navigate(`/env/${env.name}/settings`)}>
-              <Settings className="size-4" /> Settings
-            </button>
-          </li>
-          {manage && (
-            <li>
-              <button className="text-error" onClick={() => setConfirm(true)}>
-                <Trash2 className="size-4" /> Delete
-              </button>
-            </li>
-          )}
-        </ul>
-      </div>
+            {manage && (
+              <li>
+                <button className="text-error" onClick={() => { close(); setConfirm(true); }}>
+                  <Trash2 className="size-4" /> Delete
+                </button>
+              </li>
+            )}
+          </>
+        )}
+      </Menu>
       <Confirm
         open={confirm}
         onClose={() => setConfirm(false)}
