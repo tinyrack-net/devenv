@@ -20,22 +20,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Go
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /usr/local -xz
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /usr/local -xz
 
 # Node.js (+ corepack for pnpm and yarn)
 RUN case "${TARGETARCH}" in amd64) a=x64 ;; arm64) a=arm64 ;; esac \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${a}.tar.xz" \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${a}.tar.xz" \
        | tar -C /usr/local --strip-components=1 --no-same-owner --no-overwrite-dir -xJ \
     && npm install -g corepack@latest >/dev/null 2>&1 \
     && corepack enable
 
 # uv (Python package and project manager)
 RUN case "${TARGETARCH}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac \
-    && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-gnu.tar.gz" \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-gnu.tar.gz" \
        | tar -C /usr/local/bin --strip-components=1 --no-same-owner --no-overwrite-dir -xz
 
 # GitHub CLI
-RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar -C /usr/local --strip-components=1 --no-same-owner --no-overwrite-dir -xz --wildcards '*/bin/gh'
 
 # sshd refuses AuthorizedKeysCommand when its directory is writable by
