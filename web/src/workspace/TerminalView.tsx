@@ -231,6 +231,12 @@ export function TerminalView({
             setTimeout(() => setAttempt((a) => a + 1), 300);
             return;
           }
+          // Not reachable yet (just started, restarting): retry quietly.
+          if (/could not connect|not running|no route|connection refused/i.test(String(msg.message)) && attempt < 8) {
+            report("reconnecting", "waiting for the environment");
+            setTimeout(() => setAttempt((a) => a + 1), 1500);
+            return;
+          }
           term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m`);
           report("error", msg.message);
         }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -88,7 +89,21 @@ func (d *Dialer) DialRaw(ctx context.Context, name string) (ssh.Conn, <-chan ssh
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: timeout}).DialContext
 	}
-	conn, err := dial(ctx, "tcp", addr)
+	// Right after an environment becomes ready, the Service may not route
+	// to the new pod yet (no route to host, connection refused). Retry such
+	// errors briefly instead of failing the first terminal or tool call.
+	var conn net.Conn
+	retryUntil := time.Now().Add(15 * time.Second)
+	for {
+		conn, err = dial(ctx, "tcp", addr)
+		if err == nil || !transient(err) || time.Now().After(retryUntil) || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("connect to environment: %w", err)
 	}
@@ -148,4 +163,11 @@ func (d *Dialer) PushPassword(ctx context.Context, name, hash string) error {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// transient reports connection errors that resolve on their own while a new
+// pod is being wired into the Service.
+func transient(err error) bool {
+	return errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ECONNRESET)
 }
