@@ -21,9 +21,6 @@ import (
 	"time"
 )
 
-// ErrInvalidCredentials is returned when login fails.
-var ErrInvalidCredentials = errors.New("invalid credentials")
-
 // CheckPassword compares credentials in constant time. An empty expected
 // password never matches.
 func CheckPassword(wantUser, wantPassword, user, password string) bool {

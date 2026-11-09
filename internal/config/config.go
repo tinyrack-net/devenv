@@ -89,7 +89,7 @@ type Password struct {
 func (p Password) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
 
 type OIDCProvider struct {
-	// ID appears in callback URLs and DevUser identities. DNS label.
+	// ID appears in callback URLs and user identities. DNS label.
 	ID string `json:"id"`
 	// Name is shown on the login button.
 	Name             string   `json:"name,omitempty"`
@@ -99,7 +99,7 @@ type OIDCProvider struct {
 	ClientSecretFile string   `json:"clientSecretFile,omitempty"`
 	Scopes           []string `json:"scopes,omitempty"`
 	Claims           Claims   `json:"claims"`
-	// AutoCreate creates a DevUser on first login (default true). When false
+	// AutoCreate creates a user on first login (default true). When false
 	// only users an admin created (or linked) can sign in.
 	AutoCreate *bool `json:"autoCreate,omitempty"`
 	// AllowedGroups restricts login to members of these groups. Empty allows all.

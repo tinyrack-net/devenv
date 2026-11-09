@@ -28,7 +28,7 @@ const (
 type Access struct {
 	// Groups whose members may use the resource (identity provider groups).
 	Groups []string `json:"groups,omitempty"`
-	// Users who may use the resource (DevUser names).
+	// Users who may use the resource (user names).
 	Users []string `json:"users,omitempty"`
 }
 

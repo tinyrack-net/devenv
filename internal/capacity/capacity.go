@@ -21,10 +21,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/model"
 )
 
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=pods,verbs=list
-// +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=list
-
 // NodeCapacity is the free capacity of a single node.
 type NodeCapacity struct {
 	Name      string            `json:"name"`

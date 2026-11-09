@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /** Tracks a CSS media query. */
-export function useMedia(query: string): boolean {
+function useMedia(query: string): boolean {
   return useSyncExternalStore(
     (cb) => {
       const m = window.matchMedia(query);

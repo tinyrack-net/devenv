@@ -38,11 +38,6 @@ type readProcIn struct {
 	WaitFor     string `json:"wait_for,omitempty" jsonschema:"stop waiting when this text appears in the output"`
 }
 
-type procIn struct {
-	Name string `json:"name" jsonschema:"environment name"`
-	ID   string `json:"id" jsonschema:"process id"`
-}
-
 type stopProcIn struct {
 	Name   string `json:"name" jsonschema:"environment name"`
 	ID     string `json:"id" jsonschema:"process id"`

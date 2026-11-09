@@ -12,13 +12,9 @@ user: agents see and change only that user's environments (and those shared with
 user's limits apply, and every call shows up live in the workspace's agent activity panel.
 
 The single token of earlier versions still works and acts as the local administrator (or
-`mcp.legacyTokenUser`):
-
-```sh
-kubectl -n devenv-system get secret devenv-keys -o jsonpath='{.data.mcp-token}' | base64 -d; echo
-```
-
-Disable it with `mcp.legacyToken: false` once agents use personal tokens.
+`mcp.legacyTokenUser`). It is kept in the database (key `server/mcp-token`), or read from
+`mcp.existingSecret`. Disable it with `mcp.legacyToken: false` once agents use personal
+tokens.
 
 Tools that wait for an environment (`create_environment`, `start_environment`,
 `restart_environment`) wait up to 3 minutes by default (`wait: false` returns at once). MCP

@@ -41,14 +41,8 @@ metadata:
   labels: {{- include "devenv.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
-    resources: ["pods", "services", "secrets", "persistentvolumeclaims", "configmaps"]
+    resources: ["pods", "services", "secrets", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
-  - apiGroups: [""]
-    resources: ["pods/exec", "pods/portforward"]
-    verbs: ["create", "get"]
-  - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
   - apiGroups: [""]
     resources: ["events", "resourcequotas"]
     verbs: ["list"]

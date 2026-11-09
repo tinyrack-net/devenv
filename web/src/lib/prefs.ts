@@ -8,7 +8,7 @@ import { api, type Me } from "./api";
 
 export type Theme = "system" | "light" | "dark";
 
-export interface Prefs {
+interface Prefs {
   theme: Theme;
   terminalFontSize: number;
   terminalFontFamily: string;
@@ -20,7 +20,7 @@ export interface Prefs {
   listView: "cards" | "table";
 }
 
-export const defaultPrefs: Prefs = {
+const defaultPrefs: Prefs = {
   theme: "system",
   terminalFontSize: 13,
   terminalFontFamily: 'ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", "DejaVu Sans Mono", monospace',
@@ -49,7 +49,7 @@ function set(p: Prefs) {
   listeners.forEach((l) => l());
 }
 
-export function applyTheme(t: Theme) {
+function applyTheme(t: Theme) {
   const dark = t === "dark" || (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "devenv-dark" : "devenv-light";
 }

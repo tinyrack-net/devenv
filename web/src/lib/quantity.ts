@@ -4,7 +4,7 @@ const binary: Record<string, number> = { Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, 
 const decimal: Record<string, number> = { n: 1e-9, u: 1e-6, m: 1e-3, "": 1, k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15 };
 
 /** Parses a quantity into a base-unit number (cores or bytes). */
-export function parseQuantity(q: string | undefined | null): number | undefined {
+function parseQuantity(q: string | undefined | null): number | undefined {
   if (!q) return undefined;
   const m = /^([0-9.]+)([a-zA-Z]*)$/.exec(q.trim());
   if (!m) return undefined;

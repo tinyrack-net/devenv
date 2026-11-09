@@ -190,7 +190,7 @@ mcp:
   legacyToken: true
   legacyTokenUser: ""
   # -- Existing Secret with key `token` used as the legacy token. When empty
-  # a token is generated in the `<release>-keys` Secret (key `mcp-token`).
+  # a token is generated and kept in the database.
   existingSecret: ""
 
 # -- Set the Secure flag on cookies. Enable when served over HTTPS.

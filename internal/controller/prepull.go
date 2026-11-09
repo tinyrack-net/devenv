@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"time"
+
 	"context"
 	"fmt"
 	"sort"
@@ -26,12 +28,10 @@ import (
 	"github.com/tinyrack-net/devenv/internal/store"
 )
 
-// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
-
 // PrepullName is the DaemonSet that keeps prepull images on nodes.
 const PrepullName = "devenv-image-prepull"
 
-// PrepullReconciler keeps DevImages with prepull: true cached on every node
+// PrepullReconciler keeps images with prepull: true cached on every node
 // that can run environments. It runs a DaemonSet whose pods mount each image
 // as a read-only image volume: the kubelet pulls the image, nothing inside it
 // runs, and image garbage collection leaves it alone while it is in use. The
@@ -120,7 +120,7 @@ func (r *PrepullReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl
 		return nil
 	})
 	if apierrors.IsConflict(err) {
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	if err == nil {
 		logf.FromContext(ctx).V(1).Info("image prepull", "images", refs)

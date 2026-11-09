@@ -39,7 +39,7 @@ export function AdminActivityPage() {
   );
 }
 
-export function mergeEntry(list: Entry[] | undefined, e: Entry): Entry[] {
+function mergeEntry(list: Entry[] | undefined, e: Entry): Entry[] {
   const l = list ?? [];
   const i = l.findIndex((x) => x.id === e.id);
   if (i >= 0) {

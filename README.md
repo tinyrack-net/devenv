@@ -11,7 +11,7 @@ Remote development environments on Kubernetes.
   read/edit/write, ripgrep search and background processes
 - Installs with a single Helm chart; state lives in SQLite (default) or PostgreSQL
 
-> Status: early development. See [docs/PLAN.md](docs/PLAN.md).
+> Status: early development. See [docs/architecture.md](docs/architecture.md).
 
 ## Install
 

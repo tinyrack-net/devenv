@@ -14,7 +14,7 @@ type AccessInput struct {
 	Groups []string `json:"groups"`
 }
 
-// Image is the API representation of a DevImage.
+// Image is the API representation of an image.
 type Image struct {
 	Name             string         `json:"name"`
 	Image            string         `json:"image"`
@@ -43,7 +43,7 @@ type ResourcesInput struct {
 	Disk   string `json:"disk,omitempty"`
 }
 
-// Class is the API representation of a DevEnvironmentClass.
+// Class is the API representation of a class.
 type Class struct {
 	Name         string         `json:"name"`
 	StorageMode  string         `json:"storageMode"`
@@ -61,7 +61,7 @@ type ClassDetail struct {
 	Spec json.RawMessage `json:"spec"`
 }
 
-// Environment is the API representation of a DevEnvironment.
+// Environment is the API representation of an environment.
 type Environment struct {
 	Name  string `json:"name"`
 	Owner string `json:"owner,omitempty"`
@@ -247,7 +247,7 @@ type UserSummary struct {
 	DisplayName string `json:"displayName,omitempty"`
 }
 
-// User is the admin view of a DevUser.
+// User is the admin view of a user.
 type User struct {
 	Name              string         `json:"name"`
 	DisplayName       string         `json:"displayName,omitempty"`

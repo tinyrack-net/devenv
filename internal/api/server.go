@@ -23,8 +23,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/users"
 )
 
-// +kubebuilder:rbac:groups="",resources=events,verbs=list
-
 // Server serves the REST API and the SPA.
 type Server struct {
 	// DB is the source of truth.

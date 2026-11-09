@@ -1,7 +1,7 @@
 import type { Environment, Info } from "./api";
 
 /** How to reach an environment over SSH. */
-export interface SSHTarget {
+interface SSHTarget {
   host: string;
   port: number;
   user: string;
@@ -23,7 +23,7 @@ export function sshCommand(t: SSHTarget): string {
 }
 
 /** Host alias used in ~/.ssh/config and editor links. */
-export function hostAlias(env: Environment): string {
+function hostAlias(env: Environment): string {
   return `devenv-${env.name}`;
 }
 

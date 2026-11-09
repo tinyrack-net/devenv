@@ -3,19 +3,19 @@ package model
 // DefaultClassName is used when spec.className is empty.
 const DefaultClassName = "default"
 
-// EnvironmentSpec defines the desired state of DevEnvironment.
+// EnvironmentSpec is the desired state of an environment.
 type EnvironmentSpec struct {
-	// Owner is the DevUser owning this environment.
+	// Owner is the user owning this environment.
 	Owner string `json:"owner,omitempty"`
 
 	// Sharing grants other users access (connect, start, stop). Only the
 	// owner and admins can change the environment.
 	Sharing Access `json:"sharing,omitempty"`
 
-	// ImageRef is the name of a DevImage.
+	// ImageRef is the name of an image.
 	ImageRef string `json:"imageRef"`
 
-	// ClassName is the name of a DevEnvironmentClass. Defaults to "default".
+	// ClassName is the name of a class. Defaults to "default".
 	// It can change between classes with the same storage (mode and storage
 	// class); the pod is recreated, network and limits follow the new class.
 	ClassName string `json:"className,omitempty"`
@@ -56,7 +56,7 @@ const (
 	PhaseFailed   Phase = "Failed"
 )
 
-// EnvironmentStatus defines the observed state of DevEnvironment.
+// EnvironmentStatus is the observed state of an environment, written by the controller.
 type EnvironmentStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 

@@ -56,7 +56,7 @@ const lightTheme: ITheme = {
   brightWhite: "#ffffff",
 };
 
-export type TermStatus = "connecting" | "open" | "reconnecting" | "exited" | "error";
+type TermStatus = "connecting" | "open" | "reconnecting" | "exited" | "error";
 
 /**
  * A terminal attached to a persistent session in the environment. The

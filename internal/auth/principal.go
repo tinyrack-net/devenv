@@ -4,7 +4,7 @@ import "context"
 
 // Principal is the authenticated caller of a request.
 type Principal struct {
-	// Name is the DevUser name.
+	// Name is the user name.
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName,omitempty"`
 	Email       string `json:"email,omitempty"`

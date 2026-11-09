@@ -94,12 +94,6 @@ func (l *Lease) Release() {
 	}
 }
 
-// Fail drops the connection (e.g. after a transport error).
-func (l *Lease) Fail() {
-	l.pool.drop(l.name, l.p)
-	l.Release()
-}
-
 func (p *Pool) drop(name string, c *pooled) {
 	p.mu.Lock()
 	if p.conns[name] == c {

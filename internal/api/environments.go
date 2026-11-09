@@ -512,8 +512,6 @@ func (s *Server) GetEnvironment(ctx context.Context, p *auth.Principal, name str
 	return env, err
 }
 
-// +kubebuilder:rbac:groups="",resources=events,verbs=list
-
 func (s *Server) environmentEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if _, _, err := s.Authorize(r.Context(), principal(r), name, access.Use); err != nil {

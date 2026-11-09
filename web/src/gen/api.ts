@@ -40,7 +40,7 @@ export interface AccessInput {
   groups: string[];
 }
 /**
- * Image is the API representation of a DevImage.
+ * Image is the API representation of an image.
  */
 export interface Image {
   name: string;
@@ -77,7 +77,7 @@ export interface ResourcesInput {
   disk?: string;
 }
 /**
- * Class is the API representation of a DevEnvironmentClass.
+ * Class is the API representation of a class.
  */
 export interface Class {
   name: string;
@@ -97,7 +97,7 @@ export interface ClassDetail {
   spec: unknown;
 }
 /**
- * Environment is the API representation of a DevEnvironment.
+ * Environment is the API representation of an environment.
  */
 export interface Environment {
   name: string;
@@ -325,7 +325,7 @@ export interface UserSummary {
   displayName?: string;
 }
 /**
- * User is the admin view of a DevUser.
+ * User is the admin view of a user.
  */
 export interface User {
   name: string;

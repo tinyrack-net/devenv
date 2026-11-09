@@ -4,7 +4,6 @@ import type * as T from "../gen/api";
 
 export type * from "../gen/api";
 
-export type Phase = "Pending" | "Starting" | "Running" | "Stopping" | "Stopped" | "Failed";
 
 export class ApiError extends Error {
   constructor(

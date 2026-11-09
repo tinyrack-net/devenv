@@ -19,10 +19,5 @@ Open the web console:
 {{- if .Values.mcp.enabled }}
 
 MCP endpoint for AI agents: <console URL>/mcp (Streamable HTTP)
-{{- if .Values.mcp.existingSecret }}
-  Bearer token: key "token" of Secret {{ .Values.mcp.existingSecret }}
-{{- else }}
-  Bearer token:
-  kubectl -n {{ .Release.Namespace }} get secret {{ include "devenv.fullname" . }}-keys -o jsonpath='{.data.mcp-token}' | base64 -d; echo
-{{- end }}
+  Bearer token: create a personal access token in the console (Settings → Access tokens).
 {{- end }}

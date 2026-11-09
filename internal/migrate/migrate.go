@@ -34,8 +34,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/store"
 )
 
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devenvironments;devusers;devimages;devenvironmentclasses,verbs=get;list
-
 // Marker in the kv table once the import ran.
 const Marker = "migration/crds"
 

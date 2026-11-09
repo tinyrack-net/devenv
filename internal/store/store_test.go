@@ -85,7 +85,7 @@ func testStore(t *testing.T, kind string) {
 		t.Fatal(err)
 	}
 	// Status writes do not conflict with spec writers.
-	got, err = s.MutateEnvironment(ctx, "work", func(e *model.Environment) error { e.Spec.Running = new(false); return nil })
+	_, err = s.MutateEnvironment(ctx, "work", func(e *model.Environment) error { e.Spec.Running = new(false); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

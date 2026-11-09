@@ -53,9 +53,6 @@ type EnvironmentReconciler struct {
 	HelperImagePullPolicy corev1.PullPolicy
 }
 
-// +kubebuilder:rbac:groups="",resources=pods;services;secrets;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
-
 func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	name := req.Name
 	env, err := r.DB.GetEnvironment(ctx, name)
@@ -428,7 +425,7 @@ func (r *EnvironmentReconciler) ensureRunning(ctx context.Context, rs *resolved)
 	if apierrors.IsNotFound(err) {
 		if err := r.Client.Create(ctx, desired); err != nil {
 			if apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			return ctrl.Result{}, err
 		}
