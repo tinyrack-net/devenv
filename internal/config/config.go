@@ -6,7 +6,8 @@
 // Secret keys. Command line flags and the older environment variables still
 // work and override the file.
 //
-// Platform resources (images, classes) and user data stay in CRDs.
+// Platform resources (classes and catalog images) are part of the file too;
+// user data lives in the database (database:).
 package config
 
 import (
@@ -20,6 +21,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
+
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 // Config is the server configuration file.
@@ -29,6 +32,25 @@ type Config struct {
 	Users  Users  `json:"users"`
 	MCP    MCP    `json:"mcp"`
 	SSH    SSH    `json:"ssh"`
+
+	Database Database `json:"database"`
+	// Classes adapt environments to the cluster (storage, network,
+	// scheduling, limits). An environment without a class uses "default".
+	Classes map[string]model.ClassSpec `json:"classes,omitempty"`
+	// Images are catalog entries managed by the deployment. Users and admins
+	// can add more in the console (stored in the database).
+	Images map[string]model.ImageSpec `json:"images,omitempty"`
+}
+
+// Database configures where devenv keeps its state.
+type Database struct {
+	// Driver is sqlite (default) or postgres.
+	Driver string `json:"driver,omitempty"`
+	// Path of the SQLite database file.
+	Path string `json:"path,omitempty"`
+	// URL of the PostgreSQL database (postgres://...). Prefer URLFile.
+	URL     string `json:"url,omitempty"`
+	URLFile string `json:"urlFile,omitempty"`
 }
 
 type Server struct {
@@ -212,6 +234,12 @@ func (c *Config) Defaults() {
 	if c.SSH.PublicPort == 0 {
 		c.SSH.PublicPort = 2222
 	}
+	if c.Database.Driver == "" {
+		c.Database.Driver = "sqlite"
+	}
+	if c.Database.Driver == "sqlite" && c.Database.Path == "" {
+		c.Database.Path = "/var/lib/devenv/devenv.db"
+	}
 }
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -268,6 +296,42 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	switch c.Database.Driver {
+	case "sqlite":
+	case "postgres":
+		if c.Database.URL == "" {
+			add("database.url or database.urlFile is required for postgres")
+		}
+	default:
+		add("database.driver must be sqlite or postgres")
+	}
+	for name, cl := range c.Classes {
+		if !dnsLabel.MatchString(name) {
+			add("classes: name %q must be a DNS label", name)
+		}
+		switch cl.EffectiveNetworkMode() {
+		case model.NetworkModeGateway, model.NetworkModeLoadBalancer:
+		case model.NetworkModeMultus:
+			if cl.Network.Multus == nil || cl.Network.Multus.NetworkAttachment == "" {
+				add("classes.%s: network.multus.networkAttachment is required in multus mode", name)
+			}
+		default:
+			add("classes.%s: unknown network mode %q", name, cl.Network.Mode)
+		}
+		switch cl.EffectiveStorageMode() {
+		case model.StorageModePersistent, model.StorageModeEphemeral:
+		default:
+			add("classes.%s: unknown storage mode %q", name, cl.Storage.Mode)
+		}
+	}
+	for name, img := range c.Images {
+		if !dnsLabel.MatchString(name) {
+			add("images: name %q must be a DNS label", name)
+		}
+		if img.Image == "" {
+			add("images.%s.image is required", name)
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -293,6 +357,9 @@ func (c *Config) ResolveSecrets() error {
 			return err
 		}
 	}
+	if err := read("database.urlFile", c.Database.URLFile, &c.Database.URL); err != nil {
+		return err
+	}
 	return read("mcp.legacyToken.tokenFile", c.MCP.LegacyToken.TokenFile, &c.MCP.LegacyToken.Token)
 }
 
@@ -312,6 +379,7 @@ func (c *Config) Redacted() *Config {
 		out.Auth.OIDC[i] = p
 	}
 	out.MCP.LegacyToken.Token = mask(c.MCP.LegacyToken.Token)
+	out.Database.URL = mask(c.Database.URL)
 	return &out
 }
 

@@ -1,0 +1,93 @@
+package model
+
+import (
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/api/resource"
+)
+
+// EffectiveResources is the fully defaulted resource set of an environment.
+type EffectiveResources struct {
+	CPU    resource.Quantity `json:"cpu"`
+	Memory resource.Quantity `json:"memory"`
+	Disk   resource.Quantity `json:"disk"`
+}
+
+func firstQuantity(def string, qs ...*resource.Quantity) resource.Quantity {
+	for _, q := range qs {
+		if q != nil && !q.IsZero() {
+			return q.DeepCopy()
+		}
+	}
+	return resource.MustParse(def)
+}
+
+// Resolve merges environment, image and class defaults.
+// Precedence: environment > image defaults > class defaults > built-in defaults.
+func Resolve(env Resources, image *ImageSpec, class *ClassSpec) EffectiveResources {
+	return EffectiveResources{
+		CPU:    firstQuantity(DefaultCPU, env.CPU, image.DefaultResources.CPU),
+		Memory: firstQuantity(DefaultMemory, env.Memory, image.DefaultResources.Memory),
+		Disk:   firstQuantity(DefaultDisk, env.Disk, image.DefaultResources.Disk, class.Storage.DefaultSize),
+	}
+}
+
+// EffectiveStorageMode returns the storage mode with defaults applied.
+func (c *ClassSpec) EffectiveStorageMode() StorageMode {
+	if c.Storage.Mode == "" {
+		return StorageModePersistent
+	}
+	return c.Storage.Mode
+}
+
+// EffectiveNetworkMode returns the network mode with defaults applied.
+func (c *ClassSpec) EffectiveNetworkMode() NetworkMode {
+	if c.Network.Mode == "" {
+		return NetworkModeGateway
+	}
+	return c.Network.Mode
+}
+
+// CheckLimits validates resources against the class limits.
+func (c *ClassSpec) CheckLimits(r EffectiveResources) error {
+	check := func(name string, got resource.Quantity, max *resource.Quantity) error {
+		if max != nil && got.Cmp(*max) > 0 {
+			return fmt.Errorf("%s %s exceeds class limit %s", name, got.String(), max.String())
+		}
+		return nil
+	}
+	if err := check("cpu", r.CPU, c.Limits.MaxCPU); err != nil {
+		return err
+	}
+	if err := check("memory", r.Memory, c.Limits.MaxMemory); err != nil {
+		return err
+	}
+	if c.EffectiveStorageMode() == StorageModePersistent {
+		if err := check("disk", r.Disk, c.Limits.MaxDisk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// StorageCompatible reports whether an environment can move from class a to
+// class b without moving its home volume: same storage mode and, for
+// persistent storage, the same storage class.
+func StorageCompatible(a, b *ClassSpec) error {
+	if a.EffectiveStorageMode() != b.EffectiveStorageMode() {
+		return fmt.Errorf("storage mode differs (%s vs %s)", a.EffectiveStorageMode(), b.EffectiveStorageMode())
+	}
+	if a.EffectiveStorageMode() != StorageModePersistent {
+		return nil
+	}
+	name := func(p *string) string {
+		if p == nil {
+			return "(cluster default)"
+		}
+		return *p
+	}
+	if name(a.Storage.StorageClassName) != name(b.Storage.StorageClassName) {
+		return fmt.Errorf("storage class differs (%s vs %s)", name(a.Storage.StorageClassName), name(b.Storage.StorageClassName))
+	}
+	return nil
+}
