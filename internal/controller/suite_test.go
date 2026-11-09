@@ -18,12 +18,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/catalog"
+	"github.com/tinyrack-net/devenv/internal/config"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
+
+// testNS is the environment namespace of the tests.
+const testNS = "devenv"
 
 var (
 	k8sClient client.Client
 	testCtx   context.Context
+	testDB    *store.Store
+	testCat   *catalog.Catalog
 )
 
 func TestMain(m *testing.M) {
@@ -34,10 +41,7 @@ func TestMain(m *testing.M) {
 	}
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(os.Stderr), zap.Level(zapLevel())))
 
-	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd")},
-		ErrorIfCRDPathMissing: true,
-	}
+	env := &envtest.Environment{}
 	cfg, err := env.Start()
 	if err != nil {
 		panic(err)
@@ -45,7 +49,6 @@ func TestMain(m *testing.M) {
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(devenvv1.AddToScheme(scheme))
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:  scheme,
@@ -54,15 +57,27 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	if err := (&DevEnvironmentReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("devenv"),
+	dir, err := os.MkdirTemp("", "devenv-controller-test")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	testDB, err = store.Open(context.Background(), "sqlite", filepath.Join(dir, "devenv.db"))
+	if err != nil {
+		panic(err)
+	}
+	testCat = catalog.New(&config.Config{}, testDB)
+	if err := (&EnvironmentReconciler{
+		Client:    mgr.GetClient(),
+		Recorder:  mgr.GetEventRecorder("devenv"),
+		DB:        testDB,
+		Catalog:   testCat,
+		Namespace: testNS,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
 
-	if err := (&PrepullReconciler{Client: mgr.GetClient(), Namespace: "devenv-system", Image: "devenv:test"}).SetupWithManager(mgr); err != nil {
+	if err := (&PrepullReconciler{Client: mgr.GetClient(), Catalog: testCat, Namespace: "devenv-system", Image: "devenv:test"}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
 
@@ -79,8 +94,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	if err := k8sClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "devenv-system"}}); err != nil {
-		panic(err)
+	for _, ns := range []string{"devenv-system", testNS} {
+		if err := k8sClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
+			panic(err)
+		}
 	}
 	code := m.Run()
 	cancel()

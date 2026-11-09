@@ -6,17 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"github.com/tinyrack-net/devenv/internal/store/storetest"
 )
 
 func TestTokens(t *testing.T) {
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
 	now := time.Now()
-	st := &Store{Client: c, Namespace: "sys", now: func() time.Time { return now }}
+	st := &Store{DB: storetest.New(t), now: func() time.Time { return now }}
 	ctx := context.Background()
 
 	tok, plain, err := st.Create(ctx, "alice", "laptop agent", nil, time.Hour)

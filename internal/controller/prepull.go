@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,8 +20,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/catalog"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
 
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
@@ -35,21 +38,20 @@ const PrepullName = "devenv-image-prepull"
 // pod's only container is the server image (already on the node) idling.
 type PrepullReconciler struct {
 	client.Client
+	Catalog   *catalog.Catalog
 	Namespace string
 	// Image of the placeholder container (the server image with devenv-agent).
 	Image string
 }
 
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devimages;devenvironmentclasses,verbs=get;list;watch
-
 func (r *PrepullReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
-	images := &devenvv1.DevImageList{}
-	if err := r.List(ctx, images); err != nil {
+	images, err := r.Catalog.Images(ctx)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	var refs []string
 	seen := map[string]bool{}
-	for _, img := range images.Items {
+	for _, img := range images {
 		if img.Spec.Prepull && !img.Spec.Disabled && !seen[img.Spec.Image] {
 			seen[img.Spec.Image] = true
 			refs = append(refs, img.Spec.Image)
@@ -65,10 +67,7 @@ func (r *PrepullReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl
 		return ctrl.Result{}, nil
 	}
 
-	sched, err := r.scheduling(ctx)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	sched := r.scheduling()
 	labels := map[string]string{LabelManagedBy: ManagedByValue, LabelComponent: "image-prepull"}
 	var vols []corev1.Volume
 	var mounts []corev1.VolumeMount
@@ -136,19 +135,16 @@ type prepullScheduling struct {
 
 // scheduling targets nodes environments can use: with a single class its
 // node selector; otherwise all nodes. Tolerations of every class are merged.
-func (r *PrepullReconciler) scheduling(ctx context.Context) (prepullScheduling, error) {
-	classes := &devenvv1.DevEnvironmentClassList{}
-	if err := r.List(ctx, classes); err != nil {
-		return prepullScheduling{}, err
-	}
+func (r *PrepullReconciler) scheduling() prepullScheduling {
+	classes := r.Catalog.Classes()
 	out := prepullScheduling{}
-	if len(classes.Items) == 1 {
-		out.nodeSelector = classes.Items[0].Spec.Scheduling.NodeSelector
+	if len(classes) == 1 {
+		out.nodeSelector = classes[0].Spec.Scheduling.NodeSelector
 	}
-	for _, c := range classes.Items {
+	for _, c := range classes {
 		out.tolerations = append(out.tolerations, c.Spec.Scheduling.Tolerations...)
 	}
-	return out, nil
+	return out
 }
 
 func (r *PrepullReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -156,10 +152,26 @@ func (r *PrepullReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	one := handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
 		return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: r.Namespace, Name: PrepullName}}}
 	})
+	key := reconcile.Request{NamespacedName: client.ObjectKey{Namespace: r.Namespace, Name: PrepullName}}
+	images := source.Func(func(ctx context.Context, q workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
+		changes, cancel := r.Catalog.DB.Subscribe()
+		go func() {
+			<-ctx.Done()
+			cancel()
+		}()
+		q.Add(key)
+		go func() {
+			for c := range changes {
+				if c.Kind == store.KindImage {
+					q.Add(key)
+				}
+			}
+		}()
+		return nil
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("image-prepull").
-		Watches(&devenvv1.DevImage{}, one).
-		Watches(&devenvv1.DevEnvironmentClass{}, one).
+		WatchesRawSource(images).
 		Watches(&appsv1.DaemonSet{}, one).
 		Complete(r)
 }

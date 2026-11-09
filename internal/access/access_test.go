@@ -3,7 +3,7 @@ package access
 import (
 	"testing"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/auth"
 )
 
@@ -12,9 +12,9 @@ func TestEnvironment(t *testing.T) {
 	bob := &auth.Principal{Name: "bob"}
 	carol := &auth.Principal{Name: "carol", Groups: []string{"ops"}}
 	admin := &auth.Principal{Name: "root", Admin: true}
-	env := &devenvv1.DevEnvironment{Spec: devenvv1.DevEnvironmentSpec{
+	env := &model.Environment{Spec: model.EnvironmentSpec{
 		Owner:   "alice",
-		Sharing: devenvv1.Access{Users: []string{"bob"}, Groups: []string{"ops"}},
+		Sharing: model.Access{Users: []string{"bob"}, Groups: []string{"ops"}},
 	}}
 	for _, tc := range []struct {
 		p    *auth.Principal
@@ -30,9 +30,9 @@ func TestImagesAndClasses(t *testing.T) {
 	alice := &auth.Principal{Name: "alice", Groups: []string{"dev"}}
 	bob := &auth.Principal{Name: "bob"}
 	admin := &auth.Principal{Name: "root", Admin: true}
-	shared := &devenvv1.DevImage{}
-	restricted := &devenvv1.DevImage{Spec: devenvv1.DevImageSpec{Access: devenvv1.Access{Groups: []string{"dev"}}}}
-	personal := &devenvv1.DevImage{Spec: devenvv1.DevImageSpec{Owner: "alice"}}
+	shared := &model.Image{}
+	restricted := &model.Image{Spec: model.ImageSpec{Access: model.Access{Groups: []string{"dev"}}}}
+	personal := &model.Image{Spec: model.ImageSpec{Owner: "alice"}}
 
 	check := func(name string, got, want bool) {
 		t.Helper()
@@ -49,10 +49,11 @@ func TestImagesAndClasses(t *testing.T) {
 	check("alice manage shared", CanManageImage(alice, shared), false)
 	check("alice manage personal", CanManageImage(alice, personal), true)
 	check("admin manage shared", CanManageImage(admin, shared), true)
+	check("admin manage configured", CanManageImage(admin, &model.Image{Managed: true}), false)
 
-	lan := &devenvv1.DevEnvironmentClass{Spec: devenvv1.DevEnvironmentClassSpec{Access: devenvv1.Access{Groups: []string{"dev"}}}}
+	lan := &model.Class{Spec: model.ClassSpec{Access: model.Access{Groups: []string{"dev"}}}}
 	check("alice lan", CanUseClass(alice, lan), true)
 	check("bob lan", CanUseClass(bob, lan), false)
 	check("admin lan", CanUseClass(admin, lan), true)
-	check("bob default", CanUseClass(bob, &devenvv1.DevEnvironmentClass{}), true)
+	check("bob default", CanUseClass(bob, &model.Class{}), true)
 }

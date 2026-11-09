@@ -3,23 +3,33 @@ package keys
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
-
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestEnsureIsStable(t *testing.T) {
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+type memKV struct {
+	mu sync.Mutex
+	m  map[string]string
+}
 
-	a, err := Ensure(context.Background(), c, "ns", "keys")
+func (k *memKV) SetValueIfAbsent(_ context.Context, key, value string) (string, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if v, ok := k.m[key]; ok {
+		return v, nil
+	}
+	k.m[key] = value
+	return value, nil
+}
+
+func TestEnsureIsStable(t *testing.T) {
+	c := &memKV{m: map[string]string{}}
+
+	a, err := Ensure(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Ensure(context.Background(), c, "ns", "keys")
+	b, err := Ensure(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}

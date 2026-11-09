@@ -104,3 +104,6 @@ func deepCopy[T any](in *T) *T {
 	}
 	return out
 }
+
+// DeepCopyClass returns an independent copy of a class.
+func DeepCopyClass(c *Class) *Class { return deepCopy(c) }

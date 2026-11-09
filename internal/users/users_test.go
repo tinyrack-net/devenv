@@ -5,22 +5,21 @@ import (
 	"errors"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/config"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store/storetest"
 )
 
-func store(t *testing.T, objs ...client.Object) *Store {
-	s := runtime.NewScheme()
-	_ = devenvv1.AddToScheme(s)
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).WithStatusSubresource(&devenvv1.DevUser{}).Build()
+func newStore(t *testing.T, users ...*model.User) *Store {
+	db := storetest.New(t)
+	for _, u := range users {
+		if err := db.CreateUser(context.Background(), u); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := &config.Config{Auth: config.Auth{Admins: []string{"boss@example.com"}, OIDC: []config.OIDCProvider{{ID: "sso", AdminGroups: []string{"admins"}}}}}
 	cfg.Defaults()
-	return &Store{Client: c, Config: cfg}
+	return &Store{DB: db, Config: cfg}
 }
 
 func TestUserName(t *testing.T) {
@@ -39,14 +38,14 @@ func TestUserName(t *testing.T) {
 
 func TestLoginOIDC(t *testing.T) {
 	ctx := context.Background()
-	pre := &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: "carol"}, Spec: devenvv1.DevUserSpec{Email: "carol@example.com"}}
-	taken := &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: "alice"}}
-	s := store(t, pre, taken)
+	pre := &model.User{Name: "carol", Spec: model.UserSpec{Email: "carol@example.com"}}
+	taken := &model.User{Name: "alice"}
+	s := newStore(t, pre, taken)
 	p := s.Config.Provider("sso")
 
 	// New user; the name "alice" is taken so a suffix is used.
 	u, err := s.LoginOIDC(ctx, p, Claims{Subject: "s1", Username: "alice", Email: "alice@example.com", Groups: []string{"devs"}})
-	if err != nil || u.Name != "alice-2" || u.Spec.Role != devenvv1.RoleUser {
+	if err != nil || u.Name != "alice-2" || u.Spec.Role != model.RoleUser {
 		t.Fatalf("create: %+v %v", u, err)
 	}
 	// Same subject logs into the same user and refreshes groups.
@@ -66,8 +65,8 @@ func TestLoginOIDC(t *testing.T) {
 	}
 	// Unverified e-mail does not link.
 	notVerified := false
-	pre2 := &devenvv1.DevUser{ObjectMeta: metav1.ObjectMeta{Name: "dave"}, Spec: devenvv1.DevUserSpec{Email: "dave@example.com"}}
-	_ = s.Client.Create(ctx, pre2)
+	pre2 := &model.User{Name: "dave", Spec: model.UserSpec{Email: "dave@example.com"}}
+	_ = s.DB.CreateUser(ctx, pre2)
 	u, _ = s.LoginOIDC(ctx, p, Claims{Subject: "s3", Username: "mallory", Email: "dave@example.com", EmailVerified: &notVerified})
 	if u.Name == "dave" {
 		t.Fatal("linked through an unverified e-mail")
@@ -92,7 +91,7 @@ func TestLoginOIDC(t *testing.T) {
 	// Disabled.
 	got, _ = s.Get(ctx, "alice-2")
 	got.Spec.Disabled = true
-	_ = s.Client.Update(ctx, got)
+	_ = s.DB.UpdateUser(ctx, got)
 	if _, err := s.LoginOIDC(ctx, p, Claims{Subject: "s1"}); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("disabled: %v", err)
 	}

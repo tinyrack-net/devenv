@@ -1,5 +1,5 @@
-// Package users manages DevUser objects: lookup, creation on OIDC login,
-// admin resolution and consumption limits.
+// Package users manages users: lookup, creation on OIDC login, admin
+// resolution and consumption limits.
 package users
 
 import (
@@ -10,19 +10,14 @@ import (
 	"strings"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
 	"github.com/tinyrack-net/devenv/internal/auth"
 	"github.com/tinyrack-net/devenv/internal/config"
+	"github.com/tinyrack-net/devenv/internal/model"
+	"github.com/tinyrack-net/devenv/internal/store"
 )
-
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devusers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=devenv.tinyrack.net,resources=devusers/status,verbs=get;update;patch
 
 // ErrDisabled is returned for disabled users.
 var ErrDisabled = errors.New("user is disabled")
@@ -32,32 +27,23 @@ var ErrNotAllowed = errors.New("not allowed to sign in")
 
 // Store reads and writes users.
 type Store struct {
-	// Client reads through the cache and writes to the API server.
-	Client client.Client
+	DB     *store.Store
 	Config *config.Config
 }
 
 // Get returns a user by name.
-func (s *Store) Get(ctx context.Context, name string) (*devenvv1.DevUser, error) {
-	u := &devenvv1.DevUser{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: name}, u); err != nil {
-		return nil, err
-	}
-	return u, nil
+func (s *Store) Get(ctx context.Context, name string) (*model.User, error) {
+	return s.DB.GetUser(ctx, name)
 }
 
 // List returns all users.
-func (s *Store) List(ctx context.Context) ([]devenvv1.DevUser, error) {
-	list := &devenvv1.DevUserList{}
-	if err := s.Client.List(ctx, list); err != nil {
-		return nil, err
-	}
-	return list.Items, nil
+func (s *Store) List(ctx context.Context) ([]model.User, error) {
+	return s.DB.ListUsers(ctx)
 }
 
 // IsAdmin resolves the admin role from the user, the configured admin list
 // and the provider's admin groups.
-func (s *Store) IsAdmin(u *devenvv1.DevUser) bool {
+func (s *Store) IsAdmin(u *model.User) bool {
 	if u.IsAdmin() || s.Config.IsConfiguredAdmin(u.Name, u.Spec.Email) {
 		return true
 	}
@@ -74,7 +60,7 @@ func (s *Store) IsAdmin(u *devenvv1.DevUser) bool {
 }
 
 // Principal builds the request principal of a user. Disabled users are rejected.
-func (s *Store) Principal(u *devenvv1.DevUser, method string) (*auth.Principal, error) {
+func (s *Store) Principal(u *model.User, method string) (*auth.Principal, error) {
 	if u.Spec.Disabled {
 		return nil, ErrDisabled
 	}
@@ -99,41 +85,47 @@ func (s *Store) Load(ctx context.Context, name, method string) (*auth.Principal,
 }
 
 // EnsureLocalAdmin creates the local password user with the admin role.
-func (s *Store) EnsureLocalAdmin(ctx context.Context) (*devenvv1.DevUser, error) {
+func (s *Store) EnsureLocalAdmin(ctx context.Context) (*model.User, error) {
 	name := s.Config.Auth.Password.Username
 	u, err := s.Get(ctx, name)
 	if err == nil {
-		if u.Spec.Role != devenvv1.RoleAdmin {
-			before := u.DeepCopy()
-			u.Spec.Role = devenvv1.RoleAdmin
-			if err := s.Client.Patch(ctx, u, client.MergeFrom(before)); err != nil {
-				return nil, err
-			}
+		if u.Spec.Role != model.RoleAdmin {
+			return s.DB.MutateUser(ctx, name, func(u *model.User) error {
+				u.Spec.Role = model.RoleAdmin
+				return nil
+			})
 		}
 		return u, nil
 	}
-	if !apierrors.IsNotFound(err) {
+	if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	u = &devenvv1.DevUser{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"app.kubernetes.io/managed-by": "devenv"}},
-		Spec:       devenvv1.DevUserSpec{DisplayName: "Administrator", Role: devenvv1.RoleAdmin},
-	}
-	if err := s.Client.Create(ctx, u); err != nil && !apierrors.IsAlreadyExists(err) {
+	u = &model.User{Name: name, Spec: model.UserSpec{DisplayName: "Administrator", Role: model.RoleAdmin}}
+	if err := s.DB.CreateUser(ctx, u); err != nil {
+		if errors.Is(err, store.ErrExists) {
+			return s.Get(ctx, name)
+		}
 		return nil, err
 	}
 	return u, nil
 }
 
 // RecordLogin updates the login status (best effort for the caller).
-func (s *Store) RecordLogin(ctx context.Context, u *devenvv1.DevUser, provider string, groups []string) error {
-	before := u.DeepCopy()
-	u.Status.LastLoginAt = &metav1.Time{Time: time.Now().UTC().Truncate(time.Second)}
-	u.Status.LastLoginProvider = provider
-	if groups != nil || provider == "password" {
-		u.Status.Groups = groups
+func (s *Store) RecordLogin(ctx context.Context, u *model.User, provider string, groups []string) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	got, err := s.DB.MutateUser(ctx, u.Name, func(x *model.User) error {
+		x.Status.LastLoginAt = &now
+		x.Status.LastLoginProvider = provider
+		if groups != nil || provider == "password" {
+			x.Status.Groups = groups
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	return s.Client.Status().Patch(ctx, u, client.MergeFrom(before))
+	*u = *got
+	return nil
 }
 
 // Claims are the identity attributes of an OIDC login.
@@ -147,7 +139,7 @@ type Claims struct {
 }
 
 // LoginOIDC finds (or creates) the user of an OIDC login and records it.
-func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims) (*devenvv1.DevUser, error) {
+func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims) (*model.User, error) {
 	if err := allowed(p, c); err != nil {
 		return nil, err
 	}
@@ -155,7 +147,7 @@ func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims)
 	if err != nil {
 		return nil, err
 	}
-	var u *devenvv1.DevUser
+	var u *model.User
 	for i := range users {
 		for _, id := range users[i].Spec.Identities {
 			if id.Provider == p.ID && id.Subject == c.Subject {
@@ -170,9 +162,8 @@ func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims)
 			for i := range users {
 				if strings.EqualFold(users[i].Spec.Email, c.Email) && len(users[i].Spec.Identities) == 0 && users[i].Name != s.Config.Auth.Password.Username {
 					u = &users[i]
-					before := u.DeepCopy()
-					u.Spec.Identities = append(u.Spec.Identities, devenvv1.Identity{Provider: p.ID, Subject: c.Subject})
-					if err := s.Client.Patch(ctx, u, client.MergeFrom(before)); err != nil {
+					u.Spec.Identities = append(u.Spec.Identities, model.Identity{Provider: p.ID, Subject: c.Subject})
+					if err := s.DB.UpdateUser(ctx, u); err != nil {
 						return nil, err
 					}
 					break
@@ -197,7 +188,7 @@ func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims)
 			u.Spec.DisplayName = c.Name
 		}
 		if u.Spec.Email != before.Spec.Email || u.Spec.DisplayName != before.Spec.DisplayName {
-			if err := s.Client.Patch(ctx, u, client.MergeFrom(before)); err != nil {
+			if err := s.DB.UpdateUser(ctx, u); err != nil {
 				return nil, err
 			}
 		}
@@ -215,7 +206,7 @@ func (s *Store) LoginOIDC(ctx context.Context, p *config.OIDCProvider, c Claims)
 	return u, nil
 }
 
-func (s *Store) create(ctx context.Context, existing []devenvv1.DevUser, p *config.OIDCProvider, c Claims) (*devenvv1.DevUser, error) {
+func (s *Store) create(ctx context.Context, existing []model.User, p *config.OIDCProvider, c Claims) (*model.User, error) {
 	taken := map[string]bool{s.Config.Auth.Password.Username: true}
 	for _, u := range existing {
 		taken[u.Name] = true
@@ -230,17 +221,17 @@ func (s *Store) create(ctx context.Context, existing []devenvv1.DevUser, p *conf
 		if taken[name] {
 			continue
 		}
-		u := &devenvv1.DevUser{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"app.kubernetes.io/managed-by": "devenv"}},
-			Spec: devenvv1.DevUserSpec{
+		u := &model.User{
+			Name: name,
+			Spec: model.UserSpec{
 				DisplayName: c.Name,
 				Email:       c.Email,
-				Role:        devenvv1.RoleUser,
-				Identities:  []devenvv1.Identity{{Provider: p.ID, Subject: c.Subject}},
+				Role:        model.RoleUser,
+				Identities:  []model.Identity{{Provider: p.ID, Subject: c.Subject}},
 			},
 		}
-		err := s.Client.Create(ctx, u)
-		if apierrors.IsAlreadyExists(err) {
+		err := s.DB.CreateUser(ctx, u)
+		if errors.Is(err, store.ErrExists) {
 			taken[name] = true
 			continue
 		}
@@ -323,7 +314,7 @@ type Limits struct {
 }
 
 // EffectiveLimits merges the user's own limits with the server defaults.
-func (s *Store) EffectiveLimits(u *devenvv1.DevUser, admin bool) Limits {
+func (s *Store) EffectiveLimits(u *model.User, admin bool) Limits {
 	var base *config.Limits
 	if admin {
 		base = s.Config.Users.AdminLimits

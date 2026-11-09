@@ -6,7 +6,7 @@ package access
 import (
 	"slices"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/auth"
 )
 
@@ -32,12 +32,12 @@ func (l Level) String() string {
 	return "none"
 }
 
-func granted(a devenvv1.Access, p *auth.Principal) bool {
+func granted(a model.Access, p *auth.Principal) bool {
 	return slices.Contains(a.Users, p.Name) || p.InGroup(a.Groups...)
 }
 
 // Environment returns the principal's access level.
-func Environment(p *auth.Principal, e *devenvv1.DevEnvironment) Level {
+func Environment(p *auth.Principal, e *model.Environment) Level {
 	if p == nil {
 		return None
 	}
@@ -52,7 +52,7 @@ func Environment(p *auth.Principal, e *devenvv1.DevEnvironment) Level {
 
 // CanUseImage reports whether a principal may create environments with an
 // image (and see it in the catalog).
-func CanUseImage(p *auth.Principal, img *devenvv1.DevImage) bool {
+func CanUseImage(p *auth.Principal, img *model.Image) bool {
 	if p == nil {
 		return false
 	}
@@ -66,15 +66,16 @@ func CanUseImage(p *auth.Principal, img *devenvv1.DevImage) bool {
 }
 
 // CanManageImage reports whether a principal may edit or delete an image.
-func CanManageImage(p *auth.Principal, img *devenvv1.DevImage) bool {
-	if p == nil {
+// Images from the configuration file are read-only.
+func CanManageImage(p *auth.Principal, img *model.Image) bool {
+	if p == nil || img.Managed {
 		return false
 	}
 	return p.Admin || (img.Spec.Owner != "" && img.Spec.Owner == p.Name)
 }
 
 // CanUseClass reports whether a principal may create environments in a class.
-func CanUseClass(p *auth.Principal, c *devenvv1.DevEnvironmentClass) bool {
+func CanUseClass(p *auth.Principal, c *model.Class) bool {
 	if p == nil {
 		return false
 	}

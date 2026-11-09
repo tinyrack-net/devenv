@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
 
-	devenvv1 "github.com/tinyrack-net/devenv/api/v1alpha1"
+	"github.com/tinyrack-net/devenv/internal/model"
 )
 
 const (
@@ -44,20 +44,21 @@ const HelperMountPath = "/opt/devenv"
 
 // resolved holds everything needed to render child objects.
 type resolved struct {
-	env   *devenvv1.DevEnvironment
-	image *devenvv1.DevImage
-	class *devenvv1.DevEnvironmentClass
+	ns    string
+	env   *model.Environment
+	image *model.Image
+	class *model.Class
 
 	helperImage      string
 	helperPullPolicy corev1.PullPolicy
 }
 
-func podName(env *devenvv1.DevEnvironment) string     { return env.Name }
-func serviceName(env *devenvv1.DevEnvironment) string { return env.Name }
-func pvcName(env *devenvv1.DevEnvironment) string     { return env.Name + "-home" }
-func secretName(env *devenvv1.DevEnvironment) string  { return env.Name + "-ssh" }
+func podName(env *model.Environment) string     { return env.Name }
+func serviceName(env *model.Environment) string { return env.Name }
+func pvcName(env *model.Environment) string     { return env.Name + "-home" }
+func secretName(env *model.Environment) string  { return env.Name + "-ssh" }
 
-func labels(env *devenvv1.DevEnvironment, component string) map[string]string {
+func labels(env *model.Environment, component string) map[string]string {
 	return map[string]string{
 		LabelEnvironment: env.Name,
 		LabelComponent:   component,
@@ -65,23 +66,23 @@ func labels(env *devenvv1.DevEnvironment, component string) map[string]string {
 	}
 }
 
-func selectorLabels(env *devenvv1.DevEnvironment) map[string]string {
+func selectorLabels(env *model.Environment) map[string]string {
 	return map[string]string{
 		LabelEnvironment: env.Name,
 		LabelComponent:   "workspace",
 	}
 }
 
-func (r *resolved) storageMode() devenvv1.StorageMode {
+func (r *resolved) storageMode() model.StorageMode {
 	return r.class.Spec.EffectiveStorageMode()
 }
 
-func (r *resolved) networkMode() devenvv1.NetworkMode {
+func (r *resolved) networkMode() model.NetworkMode {
 	return r.class.Spec.EffectiveNetworkMode()
 }
 
-func (r *resolved) resources() devenvv1.EffectiveResources {
-	return devenvv1.Resolve(r.env.Spec.Resources, &r.image.Spec, &r.class.Spec)
+func (r *resolved) resources() model.EffectiveResources {
+	return model.Resolve(r.env.Spec.Resources, &r.image.Spec, &r.class.Spec)
 }
 
 func (r *resolved) cpu() resource.Quantity    { return r.resources().CPU }
@@ -109,7 +110,7 @@ func (r *resolved) desiredSecret(extraKeys ...string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName(r.env),
-			Namespace: r.env.Namespace,
+			Namespace: r.ns,
 			Labels:    labels(r.env, "ssh"),
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -135,7 +136,7 @@ func (r *resolved) desiredPVC() *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        pvcName(r.env),
-			Namespace:   r.env.Namespace,
+			Namespace:   r.ns,
 			Labels:      l,
 			Annotations: ann,
 		},
@@ -160,7 +161,7 @@ func (r *resolved) desiredService() *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName(r.env),
-			Namespace: r.env.Namespace,
+			Namespace: r.ns,
 			Labels:    labels(r.env, "service"),
 		},
 		Spec: corev1.ServiceSpec{
@@ -179,7 +180,7 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 	}
 
 	var homeVolume corev1.VolumeSource
-	if r.storageMode() == devenvv1.StorageModePersistent {
+	if r.storageMode() == model.StorageModePersistent {
 		homeVolume = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName(env)}}
 	} else {
 		homeVolume = corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
@@ -193,7 +194,7 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName(env),
-			Namespace: env.Namespace,
+			Namespace: r.ns,
 			Labels:    podLabels,
 		},
 		Spec: corev1.PodSpec{
@@ -255,7 +256,7 @@ func (r *resolved) desiredPod() (*corev1.Pod, error) {
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "devenv-helper", MountPath: HelperMountPath, ReadOnly: true})
 	}
 
-	if r.networkMode() == devenvv1.NetworkModeMultus {
+	if r.networkMode() == model.NetworkModeMultus {
 		a, err := r.multusAnnotation()
 		if err != nil {
 			return nil, err
@@ -297,15 +298,15 @@ func hashPod(pod *corev1.Pod) (string, error) {
 	return hex.EncodeToString(sum[:8]), nil
 }
 
-func applyPodOverrides(pod *corev1.Pod, class *devenvv1.DevEnvironmentClass) error {
-	if class.Spec.PodOverrides == nil || len(class.Spec.PodOverrides.Raw) == 0 {
+func applyPodOverrides(pod *corev1.Pod, class *model.Class) error {
+	if len(class.Spec.PodOverrides) == 0 {
 		return nil
 	}
 	orig, err := json.Marshal(pod)
 	if err != nil {
 		return err
 	}
-	patched, err := strategicpatch.StrategicMergePatch(orig, class.Spec.PodOverrides.Raw, corev1.Pod{})
+	patched, err := strategicpatch.StrategicMergePatch(orig, class.Spec.PodOverrides, corev1.Pod{})
 	if err != nil {
 		return fmt.Errorf("apply podOverrides: %w", err)
 	}

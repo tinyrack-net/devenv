@@ -1,12 +1,11 @@
-// Package keys bootstraps the server's long lived secrets.
-//
-// On first start the server creates a Secret in its own namespace holding:
+// Package keys bootstraps the server's long lived secrets in the database:
 //   - session signing key
 //   - SSH gateway host key (what users see when connecting to the gateway)
 //   - SSH client key (used by the server to log into environments)
+//   - legacy MCP token
 //
-// Keeping them in a Secret makes them stable across restarts and replicas
-// without requiring the installer (Helm, kubectl, ...) to generate them.
+// They are generated on first start; every value is written only if absent,
+// so concurrently starting replicas agree.
 package keys
 
 import (
@@ -19,21 +18,20 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update
-
+// Store keys (kv table).
 const (
-	keySession   = "session-key"
-	keyHost      = "gateway-host-key"
-	keyClient    = "client-key"
-	keyMCPToken  = "mcp-token"
-	sessionBytes = 32
+	KeySession  = "server/session-key"
+	KeyHost     = "server/gateway-host-key"
+	KeyClient   = "server/client-key"
+	KeyMCPToken = "server/mcp-token"
 )
+
+// KV is the key/value part of the store.
+type KV interface {
+	SetValueIfAbsent(ctx context.Context, key, value string) (string, error)
+}
 
 // Keys are the server's secrets.
 type Keys struct {
@@ -50,89 +48,65 @@ func (k *Keys) ClientAuthorizedKey() string {
 	return line + " devenv-server"
 }
 
-// Ensure loads or creates the key Secret. c must be an uncached client.
-func Ensure(ctx context.Context, c client.Client, namespace, name string) (*Keys, error) {
-	for range 3 {
-		sec := &corev1.Secret{}
-		err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, sec)
-		create := apierrors.IsNotFound(err)
-		if err != nil && !create {
-			return nil, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+// Ensure loads or creates the keys.
+func Ensure(ctx context.Context, kv KV) (*Keys, error) {
+	get := func(key string, gen func() (string, error)) (string, error) {
+		v, err := gen()
+		if err != nil {
+			return "", err
 		}
-		if create {
-			sec = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: namespace,
-				Labels: map[string]string{"app.kubernetes.io/managed-by": "devenv"},
-			}}
+		v, err = kv.SetValueIfAbsent(ctx, key, v)
+		if err != nil {
+			return "", fmt.Errorf("store %s: %w", key, err)
 		}
-		if sec.Data == nil {
-			sec.Data = map[string][]byte{}
-		}
-		changed := false
-		if len(sec.Data[keySession]) == 0 {
-			b := make([]byte, sessionBytes)
-			if _, err := rand.Read(b); err != nil {
-				return nil, err
-			}
-			sec.Data[keySession] = b
-			changed = true
-		}
-		if len(sec.Data[keyMCPToken]) == 0 {
-			b := make([]byte, 32)
-			if _, err := rand.Read(b); err != nil {
-				return nil, err
-			}
-			sec.Data[keyMCPToken] = []byte("dvm_" + base64.RawURLEncoding.EncodeToString(b))
-			changed = true
-		}
-		for _, k := range []string{keyHost, keyClient} {
-			if len(sec.Data[k]) == 0 {
-				pemBytes, err := newEd25519PEM()
-				if err != nil {
-					return nil, err
-				}
-				sec.Data[k] = pemBytes
-				changed = true
-			}
-		}
-		if changed {
-			if create {
-				err = c.Create(ctx, sec)
-			} else {
-				err = c.Update(ctx, sec)
-			}
-			if apierrors.IsAlreadyExists(err) || apierrors.IsConflict(err) {
-				continue // another replica won; reload
-			}
-			if err != nil {
-				return nil, fmt.Errorf("save secret %s/%s: %w", namespace, name, err)
-			}
-		}
-		return parse(sec)
+		return v, nil
 	}
-	return nil, fmt.Errorf("could not bootstrap secret %s/%s", namespace, name)
-}
-
-func parse(sec *corev1.Secret) (*Keys, error) {
-	host, err := ssh.ParsePrivateKey(sec.Data[keyHost])
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", keyHost, err)
-	}
-	cl, err := ssh.ParsePrivateKey(sec.Data[keyClient])
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", keyClient, err)
-	}
-	return &Keys{SessionKey: sec.Data[keySession], HostKey: host, ClientKey: cl, MCPToken: strings.TrimSpace(string(sec.Data[keyMCPToken]))}, nil
-}
-
-func newEd25519PEM() ([]byte, error) {
-	_, sk, err := ed25519.GenerateKey(rand.Reader)
+	session, err := get(KeySession, func() (string, error) {
+		b := make([]byte, 32)
+		_, err := rand.Read(b)
+		return base64.StdEncoding.EncodeToString(b), err
+	})
 	if err != nil {
 		return nil, err
+	}
+	token, err := get(KeyMCPToken, func() (string, error) {
+		b := make([]byte, 32)
+		_, err := rand.Read(b)
+		return "dvm_" + base64.RawURLEncoding.EncodeToString(b), err
+	})
+	if err != nil {
+		return nil, err
+	}
+	host, err := get(KeyHost, NewEd25519PEM)
+	if err != nil {
+		return nil, err
+	}
+	client, err := get(KeyClient, NewEd25519PEM)
+	if err != nil {
+		return nil, err
+	}
+	k := &Keys{MCPToken: strings.TrimSpace(token)}
+	if k.SessionKey, err = base64.StdEncoding.DecodeString(session); err != nil {
+		return nil, fmt.Errorf("parse session key: %w", err)
+	}
+	if k.HostKey, err = ssh.ParsePrivateKey([]byte(host)); err != nil {
+		return nil, fmt.Errorf("parse gateway host key: %w", err)
+	}
+	if k.ClientKey, err = ssh.ParsePrivateKey([]byte(client)); err != nil {
+		return nil, fmt.Errorf("parse client key: %w", err)
+	}
+	return k, nil
+}
+
+// NewEd25519PEM generates an OpenSSH ed25519 private key.
+func NewEd25519PEM() (string, error) {
+	_, sk, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", err
 	}
 	block, err := ssh.MarshalPrivateKey(sk, "devenv")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return pem.EncodeToMemory(block), nil
+	return string(pem.EncodeToMemory(block)), nil
 }
