@@ -24,15 +24,8 @@ const (
 
 func lbServiceName(env *model.Environment) string { return env.Name + "-lb" }
 
-// stableMAC returns the MAC of a multus environment: the pinned one, or one
-// derived from the name (stable across recreation and restores).
-func stableMAC(env *model.Environment) string {
-	if m := env.Status.StableMAC; m != "" {
-		return m
-	}
-	return nameMAC(env.Name)
-}
-
+// nameMAC returns the MAC of a multus environment, derived from the name
+// (stable across recreation and restores).
 func nameMAC(name string) string {
 	sum := sha256.Sum256([]byte("devenv/" + name))
 	mac := net.HardwareAddr(sum[:6])
@@ -66,7 +59,7 @@ func (r *resolved) multusAnnotation() (string, error) {
 		sel.Namespace, sel.Name = ns, name
 	}
 	if m.StableMAC {
-		sel.MAC = stableMAC(r.env)
+		sel.MAC = nameMAC(r.env.Name)
 	}
 	b, err := json.Marshal([]multusSelection{sel})
 	return string(b), err

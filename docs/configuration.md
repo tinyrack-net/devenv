@@ -54,10 +54,7 @@ users:
   adminLimits: null          # admins are unlimited unless set
 
 mcp:
-  enabled: true
-  legacyToken: true          # the single token of earlier versions
-  legacyTokenUser: ""        # user it acts as (default: the local admin)
-  existingSecret: ""         # key "token"; generated when empty
+  enabled: true              # agents use personal access tokens
 
 database:
   driver: sqlite             # or postgres
@@ -111,7 +108,6 @@ users:
   defaultLimits: {maxEnvironments: 5}
 mcp:
   enabled: true
-  legacyToken: {enabled: true, user: admin, tokenFile: /etc/devenv/secrets/mcp/token}
 ssh:
   publicHost: ssh.example.com
   publicPort: 2222
@@ -146,11 +142,6 @@ Images from the configuration are read-only in the console. Changing a class cha
 existing environments on their next reconcile (pods are recreated when their spec
 changes).
 
-Environment variables of earlier versions (`DEVENV_AUTH_MODE`, `DEVENV_ADMIN_USERNAME`,
-`DEVENV_ADMIN_PASSWORD[_FILE]`, `DEVENV_SECURE_COOKIES`, `DEVENV_MCP_ENABLED`,
-`DEVENV_MCP_TOKEN[_FILE]`, `DEVENV_SSH_PUBLIC_HOST`, `DEVENV_SSH_PUBLIC_PORT`) still work
-and override the file.
-
 ## Users and permissions
 
 - Users are stored in the database. OIDC logins create them (unless `autoCreate: false`).
@@ -171,28 +162,11 @@ and override the file.
 - Limits are checked when environments are created, started or resized.
 - Disabling a user rejects their sessions, tokens and SSH keys immediately.
 
-## Upgrading from 0.10
+## Upgrades
 
-0.11 moves the state from CRDs into the database. On its first start with an empty
-database the server imports, from the cluster:
+devenv keeps no backward compatibility: no deprecated settings, no automatic data
+migrations. Each release note lists the manual steps for breaking changes.
 
-- server keys and the legacy MCP token (`devenv-keys`), access tokens (`devenv-token-*`)
-- `DevUser`s, console created `DevImage`s (Helm managed ones come from the configuration)
-- `DevEnvironment`s with their SSH host keys, passwords and multus MACs
-
-and removes the `DevEnvironment` owner references from pods, services, volumes and
-secrets. Environments keep running. Class access lists edited in the console are not
-imported: set `access` in the chart values (`defaultClass.spec.access`,
-`extraClasses.<name>.access`).
-
-Helm does not delete CRDs. After checking the console, remove them:
-
-```sh
-kubectl delete crd devenvironments.devenv.tinyrack.net devusers.devenv.tinyrack.net \
-  devimages.devenv.tinyrack.net devenvironmentclasses.devenv.tinyrack.net
-kubectl -n devenv-system delete secret devenv-keys -l '!app.kubernetes.io/managed-by'   # optional
-kubectl -n devenv-system delete secret -l devenv.tinyrack.net/component=token          # optional
-kubectl -n devenv delete secret -l devenv.tinyrack.net/component=password              # optional
-```
-
-Upgrading directly from 0.8 or earlier is not supported; upgrade to 0.10 first.
+The database schema is created on an empty database only. When `store.SchemaVersion`
+changes, the server refuses to start until the schema change is applied by hand
+(including the `schema_migrations` row).

@@ -69,9 +69,6 @@ const router = createBrowserRouter([
           { path: "admin/tokens", element: <AdminTokensPage /> },
           { path: "admin/activity", element: <AdminActivityPage /> },
           { path: "admin/system", element: <AdminSystemPage /> },
-          // Old routes.
-          { path: "environments/new", element: <Navigate to="/new" replace /> },
-          { path: "ssh-keys", element: <Navigate to="/settings/keys" replace /> },
           { path: "*", element: <NotFound /> },
         ],
       },

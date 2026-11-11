@@ -96,11 +96,6 @@ type EnvironmentStatus struct {
 	// MAC is the secondary interface MAC address (multus mode).
 	MAC string `json:"mac,omitempty"`
 
-	// StableMAC is the MAC used for multus classes with stableMAC. It is
-	// derived from the name and pinned on first use, so a restored environment keeps
-	// its address.
-	StableMAC string `json:"stableMAC,omitempty"`
-
 	// Reason is a machine readable phase reason.
 	Reason string `json:"reason,omitempty"`
 }

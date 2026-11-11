@@ -189,16 +189,21 @@ func TestPoll(t *testing.T) {
 	}
 }
 
-func TestNewerSchema(t *testing.T) {
+func TestSchemaVersionMismatch(t *testing.T) {
 	ctx := context.Background()
 	p := filepath.Join(t.TempDir(), "d.db")
 	s, err := Open(ctx, "sqlite", p)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Close()
+	// Reopening the same version works.
+	if s, err = Open(ctx, "sqlite", p); err != nil {
+		t.Fatal(err)
+	}
 	_, _ = s.exec(ctx, `INSERT INTO schema_migrations (version) VALUES (999)`)
 	s.Close()
-	if _, err := Open(ctx, "sqlite", p); err == nil {
-		t.Fatal("opened a newer schema")
+	if _, err := Open(ctx, "sqlite", p); !errors.Is(err, ErrSchemaVersion) {
+		t.Fatalf("opened another schema version: %v", err)
 	}
 }

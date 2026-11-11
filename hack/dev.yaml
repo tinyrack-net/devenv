@@ -1,4 +1,6 @@
 # Configuration for `make run`.
+auth:
+  disabled: true
 database:
   driver: sqlite
   path: bin/devenv-dev.db

@@ -57,7 +57,7 @@ type Store struct {
 	subs map[chan Change]struct{}
 }
 
-// Open connects to a database and applies migrations. driver is "sqlite"
+// Open connects to a database and creates the schema if it is empty. driver is "sqlite"
 // (dsn is a file path) or "postgres" (dsn is a URL).
 func Open(ctx context.Context, driver, dsn string) (*Store, error) {
 	s := &Store{subs: map[chan Change]struct{}{}}
@@ -92,7 +92,7 @@ func Open(ctx context.Context, driver, dsn string) (*Store, error) {
 		s.db.Close()
 		return nil, fmt.Errorf("connect to %s database: %w", driver, err)
 	}
-	if err := s.migrate(ctx); err != nil {
+	if err := s.initSchema(ctx); err != nil {
 		s.db.Close()
 		return nil, err
 	}
@@ -168,11 +168,13 @@ func (s *Store) notify(kind Kind, name string) {
 	}
 }
 
-// --- migrations ---
+// --- schema ---
 
-var migrations = []string{
-	// 1: initial schema
-	`CREATE TABLE users (
+// schema is the current database schema. It is created on an empty database
+// only. Schema changes are not applied automatically: bump SchemaVersion,
+// change schema, and apply the change to existing databases by hand
+// (including the schema_migrations row).
+const schema = `CREATE TABLE users (
 		name TEXT PRIMARY KEY,
 		data TEXT NOT NULL,
 		revision BIGINT NOT NULL
@@ -200,18 +202,23 @@ var migrations = []string{
 	CREATE TABLE kv (
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
-	)`,
-}
+	)`
 
 // SchemaVersion is the schema version of this binary.
-var SchemaVersion = len(migrations)
+const SchemaVersion = 1
 
-func (s *Store) migrate(ctx context.Context) error {
+// ErrSchemaVersion is returned by Open when the database has another schema
+// version than this binary.
+var ErrSchemaVersion = errors.New("database schema version mismatch")
+
+// initSchema creates the schema on an empty database and checks the version
+// of an existing one.
+func (s *Store) initSchema(ctx context.Context) error {
 	if _, err := s.exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 	if s.postgres {
-		// Serialize migrations of concurrently starting replicas.
+		// Serialize schema creation of concurrently starting replicas.
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
 			return err
@@ -226,32 +233,26 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.queryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if current > SchemaVersion {
-		return fmt.Errorf("database schema version %d is newer than this server (%d); upgrade devenv", current, SchemaVersion)
+	if current == SchemaVersion {
+		return nil
 	}
-	for v := current + 1; v <= SchemaVersion; v++ {
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, stmt := range strings.Split(migrations[v-1], ";") {
-			if strings.TrimSpace(stmt) == "" {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("migration %d: %w", v, err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO schema_migrations (version) VALUES (?)`), v); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("migration %d: %w", v, err)
+	if current != 0 {
+		return fmt.Errorf("%w: database has %d, this server needs %d; apply the schema change by hand", ErrSchemaVersion, current, SchemaVersion)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range strings.Split(schema, ";") {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create schema: %w", err)
 		}
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, s.q(`INSERT INTO schema_migrations (version) VALUES (?)`), SchemaVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // --- key/value ---

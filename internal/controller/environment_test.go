@@ -371,13 +371,6 @@ func TestMultusMode(t *testing.T) {
 	if mac, _ := net.ParseMAC(sel[0].MAC); mac[0]&0x02 == 0 || mac[0]&0x01 != 0 {
 		t.Errorf("mac %s must be locally administered unicast", sel[0].MAC)
 	}
-	eventually(t, func() error {
-		if m := load(t, n).Status.StableMAC; m != sel[0].MAC {
-			return fmt.Errorf("pinned MAC %q", m)
-		}
-		return nil
-	})
-
 	pod.Annotations[annotationNetworkStatus] = `[{"name":"cilium","interface":"eth0","ips":["10.0.0.5"],"default":true},` +
 		`{"name":"kube-system/lan","interface":"net1","ips":["fe80::1","192.168.1.50"],"mac":"` + sel[0].MAC + `"}]`
 	must(t, k8sClient.Update(testCtx, pod))
@@ -392,18 +385,6 @@ func TestMultusMode(t *testing.T) {
 		t.Errorf("no lb service expected in multus mode: %v", err)
 	}
 
-	// A MAC pinned earlier (e.g. migrated from the UID based MAC) wins.
-	m := f.create("dev2", func(e *model.Environment) { e.Status.StableMAC = "02:aa:bb:cc:dd:ee" }).Name
-	eventually(t, func() error {
-		p := &corev1.Pod{}
-		if err := get(p, m); err != nil {
-			return err
-		}
-		if !strings.Contains(p.Annotations[annotationNetworks], "02:aa:bb:cc:dd:ee") {
-			return fmt.Errorf("networks %s", p.Annotations[annotationNetworks])
-		}
-		return nil
-	})
 }
 
 func TestPassword(t *testing.T) {
@@ -562,7 +543,7 @@ func TestChangeClass(t *testing.T) {
 // TestRecovery simulates disaster recovery: the database comes back (with
 // host key and MAC) before the storage system restored the home volume. The
 // environment waits instead of starting empty, then adopts the restored
-// volume, including PVCs still owned by a 0.10 DevEnvironment.
+// volume.
 func TestRecovery(t *testing.T) {
 	f := newFixture(t, model.ClassSpec{Storage: model.StorageSpec{Labels: map[string]string{"backup": "enabled"}}}, false)
 	priv, pub, err := generateHostKey()
@@ -582,12 +563,10 @@ func TestRecovery(t *testing.T) {
 		t.Fatalf("pod started without its volume: %v", err)
 	}
 
-	// The storage system restores the volume (labels of the old version and
-	// an owner reference to the old CRD object).
+	// The storage system restores the volume (with its own labels).
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: n + "-home", Namespace: testNS,
-			Labels:          map[string]string{LabelEnvironment: n, "restored": "yes"},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "devenv.tinyrack.net/v1alpha1", Kind: "DevEnvironment", Name: n, UID: "00000000-0000-0000-0000-000000000001"}},
+			Labels: map[string]string{LabelEnvironment: n, "restored": "yes"},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}},
@@ -599,8 +578,8 @@ func TestRecovery(t *testing.T) {
 		if err := get(p, n+"-home"); err != nil {
 			return err
 		}
-		if p.UID != pvc.UID || len(p.OwnerReferences) != 0 || p.Labels["backup"] != "enabled" || p.Labels["restored"] != "yes" {
-			return fmt.Errorf("pvc %v %v", p.OwnerReferences, p.Labels)
+		if p.UID != pvc.UID || p.Labels["backup"] != "enabled" || p.Labels["restored"] != "yes" {
+			return fmt.Errorf("pvc %v", p.Labels)
 		}
 		return nil
 	})
@@ -655,13 +634,8 @@ func TestDeleteAndOrphans(t *testing.T) {
 	must(t, get(&corev1.PersistentVolumeClaim{}, ghost+"-home"))
 }
 
-func TestStableMACFromName(t *testing.T) {
-	a := stableMAC(&model.Environment{Name: "x"})
-	b := stableMAC(&model.Environment{Name: "x", CreatedAt: metav1.Now().Time})
-	if a != b || a == stableMAC(&model.Environment{Name: "y"}) {
+func TestNameMAC(t *testing.T) {
+	if nameMAC("x") != nameMAC("x") || nameMAC("x") == nameMAC("y") {
 		t.Fatal("MAC must depend on the name only")
-	}
-	if stableMAC(&model.Environment{Name: "x", Status: model.EnvironmentStatus{StableMAC: "02:00:00:00:00:01"}}) != "02:00:00:00:00:01" {
-		t.Fatal("pinned MAC ignored")
 	}
 }

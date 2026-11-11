@@ -2,7 +2,6 @@
 //   - session signing key
 //   - SSH gateway host key (what users see when connecting to the gateway)
 //   - SSH client key (used by the server to log into environments)
-//   - legacy MCP token
 //
 // They are generated on first start; every value is written only if absent,
 // so concurrently starting replicas agree.
@@ -22,10 +21,9 @@ import (
 
 // Store keys (kv table).
 const (
-	KeySession  = "server/session-key"
-	KeyHost     = "server/gateway-host-key"
-	KeyClient   = "server/client-key"
-	KeyMCPToken = "server/mcp-token"
+	KeySession = "server/session-key"
+	KeyHost    = "server/gateway-host-key"
+	KeyClient  = "server/client-key"
 )
 
 // KV is the key/value part of the store.
@@ -38,8 +36,6 @@ type Keys struct {
 	SessionKey []byte
 	HostKey    ssh.Signer
 	ClientKey  ssh.Signer
-	// MCPToken authenticates MCP clients (Authorization: Bearer).
-	MCPToken string
 }
 
 // ClientAuthorizedKey returns the authorized_keys line for the client key.
@@ -69,14 +65,6 @@ func Ensure(ctx context.Context, kv KV) (*Keys, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := get(KeyMCPToken, func() (string, error) {
-		b := make([]byte, 32)
-		_, err := rand.Read(b)
-		return "dvm_" + base64.RawURLEncoding.EncodeToString(b), err
-	})
-	if err != nil {
-		return nil, err
-	}
 	host, err := get(KeyHost, NewEd25519PEM)
 	if err != nil {
 		return nil, err
@@ -85,7 +73,7 @@ func Ensure(ctx context.Context, kv KV) (*Keys, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &Keys{MCPToken: strings.TrimSpace(token)}
+	k := &Keys{}
 	if k.SessionKey, err = base64.StdEncoding.DecodeString(session); err != nil {
 		return nil, fmt.Errorf("parse session key: %w", err)
 	}

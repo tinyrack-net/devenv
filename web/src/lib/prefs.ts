@@ -2,7 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "./api";
 
-// Console preferences are stored on the user (DevUser.spec.preferences) so
+// Console preferences are stored on the user (user preferences) so
 // they follow the user across browsers; localStorage keeps them available
 // before /me loads.
 

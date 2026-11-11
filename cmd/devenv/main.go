@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +32,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/gateway"
 	"github.com/tinyrack-net/devenv/internal/keys"
 	"github.com/tinyrack-net/devenv/internal/mcpserver"
-	"github.com/tinyrack-net/devenv/internal/migrate"
 	"github.com/tinyrack-net/devenv/internal/model"
 	"github.com/tinyrack-net/devenv/internal/server"
 	"github.com/tinyrack-net/devenv/internal/sshclient"
@@ -59,94 +57,12 @@ func envOr(key, def string) string {
 	return def
 }
 
-// readSecret returns the value of an environment variable or the content of
-// the file named by KEY_FILE, and whether either was set.
-func readSecret(key string) (string, bool, error) {
-	if f := os.Getenv(key + "_FILE"); f != "" {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			return "", true, fmt.Errorf("read %s_FILE: %w", key, err)
-		}
-		return strings.TrimSpace(string(b)), true, nil
-	}
-	v, ok := os.LookupEnv(key)
-	return v, ok, nil
-}
-
-// applyLegacy maps the flags and environment variables of earlier versions
-// onto the configuration. Explicitly set values override the file.
-func applyLegacy(cfg *config.Config, set map[string]bool, f *flags) error {
-	if v, ok := os.LookupEnv("DEVENV_AUTH_MODE"); ok || set["auth-mode"] {
-		if set["auth-mode"] {
-			v = f.authMode
-		}
-		switch v {
-		case "password":
-		case "none":
-			cfg.Auth.Disabled = true
-		default:
-			return fmt.Errorf("unknown auth mode %q", v)
-		}
-	}
-	if v, ok := os.LookupEnv("DEVENV_ADMIN_USERNAME"); ok && v != "" {
-		cfg.Auth.Password.Username = v
-	}
-	if set["admin-username"] {
-		cfg.Auth.Password.Username = f.adminUser
-	}
-	if v, ok := os.LookupEnv("DEVENV_SECURE_COOKIES"); ok {
-		cfg.Auth.Session.SecureCookies = v == "true"
-	}
-	if set["secure-cookies"] {
-		cfg.Auth.Session.SecureCookies = f.secureCookies
-	}
-	if pw, ok, err := readSecret("DEVENV_ADMIN_PASSWORD"); err != nil {
-		return err
-	} else if ok && pw != "" {
-		cfg.Auth.Password.Password = pw
-	}
-	if v, ok := os.LookupEnv("DEVENV_MCP_ENABLED"); ok {
-		cfg.MCP.Enabled = new(v == "true")
-	}
-	if set["mcp"] {
-		cfg.MCP.Enabled = new(f.mcpEnabled)
-	}
-	if t, ok, err := readSecret("DEVENV_MCP_TOKEN"); err != nil {
-		return err
-	} else if ok && t != "" {
-		cfg.MCP.LegacyToken.Token = t
-	}
-	if v, ok := os.LookupEnv("DEVENV_SSH_PUBLIC_HOST"); ok && v != "" {
-		cfg.SSH.PublicHost = v
-	}
-	if v, ok := os.LookupEnv("DEVENV_SSH_PUBLIC_PORT"); ok {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.SSH.PublicPort = n
-		}
-	}
-	if set["ssh-public-host"] {
-		cfg.SSH.PublicHost = f.sshPublicHost
-	}
-	if set["ssh-public-port"] {
-		cfg.SSH.PublicPort = f.sshPublicPort
-	}
-	if v, ok := os.LookupEnv("DEVENV_EXTERNAL_URL"); ok && v != "" {
-		cfg.Server.ExternalURL = v
-	}
-	return nil
-}
-
 type flags struct {
 	metricsAddr, probeAddr, httpAddr, sshAddr string
-	sshPublicHost                             string
-	sshPublicPort                             int
-	mcpEnabled                                bool
 	helperImage                               string
 	leaderElect                               bool
 	envNamespace, leaderNamespace             string
-	authMode, serverNamespace, keysSecret     string
-	adminUser                                 string
-	secureCookies                             bool
+	serverNamespace                           string
 	configFile                                string
 }
 
@@ -157,23 +73,14 @@ func main() {
 	flag.StringVar(&f.probeAddr, "health-probe-bind-address", ":8082", "Health probe endpoint address.")
 	flag.StringVar(&f.httpAddr, "http-bind-address", envOr("DEVENV_HTTP_ADDR", ":8080"), "API and web console address. Empty disables it.")
 	flag.StringVar(&f.sshAddr, "ssh-bind-address", envOr("DEVENV_SSH_ADDR", ":2222"), "SSH gateway address. Empty disables it.")
-	flag.StringVar(&f.sshPublicHost, "ssh-public-host", "", "Host users connect to for SSH (overrides ssh.publicHost).")
-	flag.IntVar(&f.sshPublicPort, "ssh-public-port", 0, "Port users connect to for SSH (overrides ssh.publicPort).")
 	flag.StringVar(&f.helperImage, "helper-image", envOr("DEVENV_HELPER_IMAGE", ""), "Image mounted into environments at /opt/devenv to provide devenv-agent (usually the server image). Empty disables the helper.")
-	flag.BoolVar(&f.mcpEnabled, "mcp", true, "Serve the MCP endpoint at /mcp (overrides mcp.enabled).")
 	flag.BoolVar(&f.leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&f.envNamespace, "environment-namespace", envOr("DEVENV_ENVIRONMENT_NAMESPACE", "devenv"), "Namespace where environments live.")
 	flag.StringVar(&f.leaderNamespace, "leader-election-namespace", os.Getenv("POD_NAMESPACE"), "Namespace for the leader election lease.")
-	flag.StringVar(&f.authMode, "auth-mode", "password", "Deprecated: password or none (auth.disabled).")
-	flag.StringVar(&f.adminUser, "admin-username", "admin", "Deprecated: auth.password.username.")
-	flag.BoolVar(&f.secureCookies, "secure-cookies", false, "Deprecated: auth.session.secureCookies.")
-	flag.StringVar(&f.serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server (key Secret, tokens). Defaults to the environment namespace.")
-	flag.StringVar(&f.keysSecret, "keys-secret", envOr("DEVENV_KEYS_SECRET", "devenv-keys"), "Secret holding the server keys of 0.10 and earlier (imported once).")
+	flag.StringVar(&f.serverNamespace, "server-namespace", envOr("POD_NAMESPACE", ""), "Namespace of the devenv server (image prepull DaemonSet). Defaults to the environment namespace.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
-	set := map[string]bool{}
-	flag.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	log := ctrl.Log.WithName("setup")
@@ -189,9 +96,6 @@ func main() {
 	if err := cfg.ResolveSecrets(); err != nil {
 		exit(err, "read configuration secrets")
 	}
-	if err := applyLegacy(cfg, set, &f); err != nil {
-		exit(err, "apply flags")
-	}
 	cfg.Defaults()
 
 	envNamespace := f.envNamespace
@@ -201,7 +105,7 @@ func main() {
 	}
 
 	// Namespaced objects are cached in the environment namespace; the server
-	// namespace holds the prepull DaemonSet and token Secrets.
+	// namespace holds the prepull DaemonSet.
 	cacheOpts := cache.Options{DefaultNamespaces: map[string]cache.Config{envNamespace: {}}}
 	cacheOpts.ByObject = map[client.Object]cache.ByObject{
 		&appsv1.DaemonSet{}: {Namespaces: map[string]cache.Config{serverNamespace: {}}},
@@ -223,7 +127,7 @@ func main() {
 		if err == nil {
 			break
 		}
-		if attempt >= 30 || strings.Contains(err.Error(), "newer than this server") {
+		if attempt >= 30 || errors.Is(err, store.ErrSchemaVersion) {
 			exit(err, "open database")
 		}
 		log.Info("database not ready, retrying", "error", err.Error())
@@ -231,19 +135,9 @@ func main() {
 	}
 	log.Info("database ready", "driver", cfg.Database.Driver, "schema", store.SchemaVersion)
 
-	// One-time import of the CRD based state of 0.10 and earlier.
-	if _, err := migrate.Run(context.Background(), direct, db, migrate.Options{
-		EnvironmentNamespace: envNamespace, ServerNamespace: serverNamespace, KeysSecret: f.keysSecret, Log: log.WithName("migrate"),
-	}); err != nil {
-		exit(err, "import previous state")
-	}
-
 	serverKeys, err := keys.Ensure(context.Background(), db)
 	if err != nil {
 		exit(err, "bootstrap server keys")
-	}
-	if cfg.MCP.LegacyToken.Token == "" {
-		cfg.MCP.LegacyToken.Token = serverKeys.MCPToken
 	}
 	if err := cfg.Validate(); err != nil {
 		exit(err, "invalid configuration")

@@ -62,8 +62,8 @@ The controller then recreates every environment from the database:
   `AwaitingVolume`. Once the PVC is back, the controller adopts it and starts the
   environment.
 - **SSH host keys come from the database.** Clients see no host key warnings.
-- **Multus MACs are pinned in the database.** DHCP hands out the same addresses.
-- **Access tokens, the legacy MCP token and console sessions keep working**, because the
+- **Multus MACs are derived from the environment name.** DHCP hands out the same addresses.
+- **Access tokens and console sessions keep working**, because the
   server keys are in the database.
 
 If a home volume is gone for good, an administrator can start the environment with an

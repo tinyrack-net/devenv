@@ -22,34 +22,24 @@ func (s *Server) Session(ctx context.Context, sess *auth.Session) (*auth.Princip
 	return s.Users.Load(ctx, sess.User, "session")
 }
 
-// Token implements auth.Resolver: personal access tokens and the legacy
-// global MCP token.
+// Token implements auth.Resolver: personal access tokens.
 func (s *Server) Token(ctx context.Context, token, scope string) (*auth.Principal, error) {
-	if strings.HasPrefix(token, tokens.Prefix) {
-		t, err := s.Tokens.Verify(ctx, token)
-		if err != nil {
-			return nil, err
-		}
-		if !t.HasScope(scope) {
-			return nil, errors.New("token lacks scope " + scope)
-		}
-		p, err := s.Users.Load(ctx, t.User, "token")
-		if err != nil {
-			return nil, err
-		}
-		p.TokenID, p.TokenName = t.ID, t.Name
-		return p, nil
+	if !strings.HasPrefix(token, tokens.Prefix) {
+		return nil, tokens.ErrInvalid
 	}
-	lt := s.Config.MCP.LegacyToken
-	if scope == tokens.ScopeMCP && lt.IsEnabled() && lt.Token != "" && auth.CheckPassword("", lt.Token, "", token) {
-		p, err := s.Users.Load(ctx, lt.User, "token")
-		if err != nil {
-			return nil, err
-		}
-		p.TokenName = "legacy MCP token"
-		return p, nil
+	t, err := s.Tokens.Verify(ctx, token)
+	if err != nil {
+		return nil, err
 	}
-	return nil, tokens.ErrInvalid
+	if !t.HasScope(scope) {
+		return nil, errors.New("token lacks scope " + scope)
+	}
+	p, err := s.Users.Load(ctx, t.User, "token")
+	if err != nil {
+		return nil, err
+	}
+	p.TokenID, p.TokenName = t.ID, t.Name
+	return p, nil
 }
 
 func (s *Server) info(w http.ResponseWriter, _ *http.Request) {

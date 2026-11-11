@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -121,9 +120,6 @@ func (r *EnvironmentReconciler) reconcile(ctx context.Context, env *model.Enviro
 		env.Status.IP, env.Status.MAC = "", ""
 	}
 	env.Status.NetworkMode = rs.networkMode()
-	if m := rs.class.Spec.Network.Multus; rs.networkMode() == model.NetworkModeMultus && m != nil && m.StableMAC && env.Status.StableMAC == "" {
-		env.Status.StableMAC = stableMAC(env)
-	}
 
 	if err := r.ensureHostKey(ctx, env); err != nil {
 		return ctrl.Result{}, fmt.Errorf("host key: %w", err)
@@ -212,7 +208,6 @@ func (r *EnvironmentReconciler) ensureSecret(ctx context.Context, rs *resolved) 
 		obj.Data[HostKeyFile] = rs.env.HostKey
 		obj.Data[HostPublicKeyFile] = rs.env.HostKeyPub
 		obj.Data[PasswordHashFile] = []byte(rs.env.PasswordHash)
-		obj.OwnerReferences = nil
 		return nil
 	})
 	return err
@@ -245,13 +240,12 @@ func (r *EnvironmentReconciler) ensurePVC(ctx context.Context, rs *resolved) (ct
 		return ctrl.Result{}, true, err
 	}
 	if !env.VolumeCreated {
-		// Adopted (migration, or a volume restored before the record).
+		// Adopted (a volume restored before the record).
 		if err := r.markVolumeCreated(ctx, env); err != nil {
 			return ctrl.Result{}, true, err
 		}
 	}
-	// Keep labels and annotations in sync; drop owner references of
-	// earlier versions (CRD owners) so nothing garbage collects the volume.
+	// Keep labels and annotations in sync.
 	before := obj.DeepCopy()
 	for k, v := range desired.Labels {
 		if obj.Labels == nil {
@@ -265,7 +259,6 @@ func (r *EnvironmentReconciler) ensurePVC(ctx context.Context, rs *resolved) (ct
 		}
 		obj.Annotations[k] = v
 	}
-	obj.OwnerReferences = withoutDevenvOwners(obj.OwnerReferences)
 	if !apiequality.Semantic.DeepEqual(before.ObjectMeta, obj.ObjectMeta) {
 		if err := r.Client.Patch(ctx, obj, client.MergeFrom(before)); err != nil {
 			return ctrl.Result{}, true, err
@@ -304,18 +297,6 @@ func (r *EnvironmentReconciler) markVolumeCreated(ctx context.Context, env *mode
 	return nil
 }
 
-// withoutDevenvOwners drops DevEnvironment owner references (0.10 and
-// earlier).
-func withoutDevenvOwners(refs []metav1.OwnerReference) []metav1.OwnerReference {
-	var out []metav1.OwnerReference
-	for _, ref := range refs {
-		if ref.Kind != "DevEnvironment" {
-			out = append(out, ref)
-		}
-	}
-	return out
-}
-
 func (r *EnvironmentReconciler) ensureService(ctx context.Context, rs *resolved) error {
 	desired := rs.desiredService()
 	obj := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace}}
@@ -324,7 +305,6 @@ func (r *EnvironmentReconciler) ensureService(ctx context.Context, rs *resolved)
 		obj.Spec.Type = desired.Spec.Type
 		obj.Spec.Selector = desired.Spec.Selector
 		obj.Spec.Ports = desired.Spec.Ports
-		obj.OwnerReferences = nil
 		return nil
 	})
 	return err
@@ -362,7 +342,6 @@ func (r *EnvironmentReconciler) ensureLBService(ctx context.Context, rs *resolve
 		obj.Spec.Selector = desired.Spec.Selector
 		obj.Spec.Ports = mergeNodePorts(obj.Spec.Ports, desired.Spec.Ports)
 		obj.Spec.ExternalTrafficPolicy = desired.Spec.ExternalTrafficPolicy
-		obj.OwnerReferences = nil
 		return nil
 	})
 	if err != nil {
@@ -450,16 +429,6 @@ func (r *EnvironmentReconciler) ensureRunning(ctx context.Context, rs *resolved)
 		r.event(env, pod, corev1.EventTypeNormal, "Restarting", "spec changed, recreating pod")
 		setPhase(env, model.PhaseStarting, "Restarting", "spec changed")
 		return ctrl.Result{}, nil
-	}
-	if len(pod.OwnerReferences) > 0 {
-		// Pods of 0.10 are owned by the DevEnvironment CRD.
-		before := pod.DeepCopy()
-		pod.OwnerReferences = withoutDevenvOwners(pod.OwnerReferences)
-		if !reflect.DeepEqual(before.OwnerReferences, pod.OwnerReferences) {
-			if err := r.Client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
 	}
 
 	env.Status.PodName = pod.Name

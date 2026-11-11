@@ -54,8 +54,8 @@ users:
 	if o == nil || o.ClientSecret != "s3cret" || o.Name != "issuary" || o.Claims.Username != "preferred_username" || !o.IsAutoCreate() {
 		t.Fatalf("provider %+v", o)
 	}
-	if c.Auth.Password.Password != "hunter2" || c.MCP.LegacyToken.User != "admin" {
-		t.Fatalf("defaults %+v %+v", c.Auth.Password, c.MCP.LegacyToken)
+	if c.Auth.Password.Password != "hunter2" || c.Auth.Password.Username != "admin" {
+		t.Fatalf("defaults %+v", c.Auth.Password)
 	}
 	r := c.Redacted()
 	if r.Auth.OIDC[0].ClientSecret != "********" || c.Auth.OIDC[0].ClientSecret != "s3cret" {

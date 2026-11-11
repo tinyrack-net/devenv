@@ -20,7 +20,7 @@ export function AdminTokensPage() {
   });
   return (
     <AdminOnly>
-      <PageHeader title="Access tokens" subtitle="Every user's tokens. The shared legacy MCP token (if enabled) is not listed." />
+      <PageHeader title="Access tokens" subtitle="Every user's tokens." />
       <ErrorAlert error={tokens.error} />
       {tokens.isLoading && <Loading />}
       {tokens.data?.length === 0 && <Empty icon={<Ticket className="size-10" />} title="No tokens" />}

@@ -3,8 +3,7 @@
 // Deployment settings (authentication, sessions, MCP, SSH, user defaults) live
 // in one YAML file (--config / DEVENV_CONFIG, rendered by the Helm chart from
 // `config:`). Secrets are referenced by *File fields that point at mounted
-// Secret keys. Command line flags and the older environment variables still
-// work and override the file.
+// Secret keys.
 //
 // Platform resources (classes and catalog images) are part of the file too;
 // user data lives in the database (database:).
@@ -140,25 +139,10 @@ type Limits struct {
 
 type MCP struct {
 	Enabled *bool `json:"enabled,omitempty"`
-	// LegacyToken is the single bearer token of older versions (Secret key
-	// mcp-token, chart mcp.existingSecret). It acts as User.
-	LegacyToken LegacyToken `json:"legacyToken"`
 }
 
 // IsEnabled reports whether /mcp is served (default true).
 func (m MCP) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
-
-type LegacyToken struct {
-	// Enabled defaults to true.
-	Enabled *bool `json:"enabled,omitempty"`
-	// User the token acts as. Defaults to the local admin user name.
-	User      string `json:"user,omitempty"`
-	Token     string `json:"token,omitempty"`
-	TokenFile string `json:"tokenFile,omitempty"`
-}
-
-// IsEnabled reports whether the legacy token is accepted (default true).
-func (l LegacyToken) IsEnabled() bool { return l.Enabled == nil || *l.Enabled }
 
 type SSH struct {
 	PublicHost string `json:"publicHost,omitempty"`
@@ -227,9 +211,6 @@ func (c *Config) Defaults() {
 		if p.Claims.Groups == "" {
 			p.Claims.Groups = "groups"
 		}
-	}
-	if c.MCP.LegacyToken.User == "" {
-		c.MCP.LegacyToken.User = c.Auth.Password.Username
 	}
 	if c.SSH.PublicPort == 0 {
 		c.SSH.PublicPort = 2222
@@ -357,10 +338,7 @@ func (c *Config) ResolveSecrets() error {
 			return err
 		}
 	}
-	if err := read("database.urlFile", c.Database.URLFile, &c.Database.URL); err != nil {
-		return err
-	}
-	return read("mcp.legacyToken.tokenFile", c.MCP.LegacyToken.TokenFile, &c.MCP.LegacyToken.Token)
+	return read("database.urlFile", c.Database.URLFile, &c.Database.URL)
 }
 
 // Redacted returns a copy without secret values, for display.
@@ -378,7 +356,6 @@ func (c *Config) Redacted() *Config {
 		p.ClientSecret = mask(p.ClientSecret)
 		out.Auth.OIDC[i] = p
 	}
-	out.MCP.LegacyToken.Token = mask(c.MCP.LegacyToken.Token)
 	out.Database.URL = mask(c.Database.URL)
 	return &out
 }

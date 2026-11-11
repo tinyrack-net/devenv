@@ -36,7 +36,7 @@ build-all: web build
 
 .PHONY: run
 run: ## Run against the current kubeconfig (API on :8080, auth disabled, SQLite in ./bin)
-	DEVENV_AUTH_MODE=none go run ./cmd/devenv --metrics-bind-address=0 --config=hack/dev.yaml
+	go run ./cmd/devenv --metrics-bind-address=0 --config=hack/dev.yaml
 
 .PHONY: chart-lint
 chart-lint:

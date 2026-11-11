@@ -11,11 +11,6 @@ The console shows the endpoint and a client configuration snippet. Tools act as 
 user: agents see and change only that user's environments (and those shared with them), the
 user's limits apply, and every call shows up live in the workspace's agent activity panel.
 
-The single token of earlier versions still works and acts as the local administrator (or
-`mcp.legacyTokenUser`). It is kept in the database (key `server/mcp-token`), or read from
-`mcp.existingSecret`. Disable it with `mcp.legacyToken: false` once agents use personal
-tokens.
-
 Tools that wait for an environment (`create_environment`, `start_environment`,
 `restart_environment`) wait up to 3 minutes by default (`wait: false` returns at once). MCP
 clients and gateways in front of devenv must allow tool calls that long.

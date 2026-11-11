@@ -44,8 +44,6 @@ import (
 	"github.com/tinyrack-net/devenv/internal/users"
 )
 
-const testToken = "dvm_test-token"
-
 func signer(t *testing.T) ssh.Signer {
 	_, sk, _ := ed25519.GenerateKey(rand.Reader)
 	s, err := ssh.NewSignerFromKey(sk)
@@ -168,6 +166,7 @@ type harness struct {
 	db      *store.Store
 	session *mcp.ClientSession
 	url     string
+	token   string // admin access token
 }
 
 func q(s string) *resource.Quantity { v := resource.MustParse(s); return &v }
@@ -212,7 +211,6 @@ func newHarness(t *testing.T) *harness {
 		},
 	}
 	cfg := &config.Config{Auth: config.Auth{Password: config.Password{Password: "pw"}}}
-	cfg.MCP.LegacyToken.Token = testToken
 	cfg.Classes = map[string]model.ClassSpec{"default": {Limits: model.Limits{MaxCPU: q("4")}}}
 	cfg.Images = map[string]model.ImageSpec{"base": {Image: "example.com/base:1", DefaultResources: model.Resources{CPU: q("1"), Memory: q("1Gi")}}}
 	cfg.Defaults()
@@ -224,6 +222,10 @@ func newHarness(t *testing.T) *harness {
 		Capacity: &capacity.Checker{Reader: c, Namespace: "devenv"}, Dialer: dialer,
 	}
 	m := &Server{API: apiSrv, Dialer: dialer, Resolver: apiSrv, Activity: &activity.Log{}}
+	_, adminToken, err := apiSrv.Tokens.Create(context.Background(), "admin", "test", []string{tokens.ScopeMCP}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(m.Handler())
 	t.Cleanup(ts.Close)
 
@@ -258,11 +260,11 @@ func newHarness(t *testing.T) *harness {
 		}
 	}()
 
-	h := &harness{t: t, c: c, db: db, url: ts.URL, srv: m}
+	h := &harness{t: t, c: c, db: db, url: ts.URL, srv: m, token: adminToken}
 	cl := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
 	sess, err := cl.Connect(context.Background(), &mcp.StreamableClientTransport{
 		Endpoint:   ts.URL,
-		HTTPClient: &http.Client{Transport: bearer{testToken}},
+		HTTPClient: &http.Client{Transport: bearer{adminToken}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +369,7 @@ func (h *harness) call(name string, args map[string]any, out any) (isError bool,
 
 func TestAuth(t *testing.T) {
 	h := newHarness(t)
-	for _, tok := range []string{"", "Bearer wrong", "Basic " + testToken} {
+	for _, tok := range []string{"", "Bearer wrong", "Basic " + h.token} {
 		req, _ := http.NewRequest("POST", h.url, strings.NewReader(`{}`))
 		if tok != "" {
 			req.Header.Set("Authorization", tok)
@@ -564,7 +566,7 @@ func TestPerUserTokens(t *testing.T) {
 	if isErr, text := alice.call("exec", map[string]any{"name": "a1", "command": "echo hi-alice"}, &ex); isErr || !strings.Contains(ex.Stdout, "hi-alice") {
 		t.Fatalf("alice exec: %s %+v", text, ex)
 	}
-	// The legacy token acts as the admin, who sees everything with all.
+	// The admin sees everything with all.
 	h.call("list_environments", map[string]any{"all": true}, &list)
 	if len(list.Environments) != 1 {
 		t.Fatalf("admin all: %+v", list)

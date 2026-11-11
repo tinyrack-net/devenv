@@ -42,9 +42,6 @@ func TestEnsureIsStable(t *testing.T) {
 	if !strings.HasPrefix(a.ClientAuthorizedKey(), "ssh-ed25519 ") || !strings.HasSuffix(a.ClientAuthorizedKey(), " devenv-server") {
 		t.Errorf("authorized key = %q", a.ClientAuthorizedKey())
 	}
-	if a.MCPToken == "" || a.MCPToken != b.MCPToken || !strings.HasPrefix(a.MCPToken, "dvm_") {
-		t.Errorf("mcp token = %q / %q", a.MCPToken, b.MCPToken)
-	}
 	if string(a.HostKey.PublicKey().Marshal()) == string(a.ClientKey.PublicKey().Marshal()) {
 		t.Errorf("host and client keys must differ")
 	}

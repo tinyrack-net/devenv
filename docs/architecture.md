@@ -30,7 +30,7 @@ Kubernetes objects.
 | What | Where |
 |---|---|
 | Auth, limits, classes, catalog images | configuration file (`devenv.yaml`, from Helm values) |
-| Users, environments, host keys, password hashes, pinned MACs, tokens, server keys, console images | database (`internal/store`) |
+| Users, environments, host keys, password hashes, tokens, server keys, console images | database (`internal/store`) |
 | Pods, Services, `<env>-ssh` Secrets, home PVCs | Kubernetes, derived by the controller |
 
 Environment records have a spec (written by the API) and a status (written by the controller
@@ -52,7 +52,6 @@ internal/api          REST API, terminal and VNC proxies, SSE stream
 internal/mcpserver    MCP tools
 internal/gateway      SSH gateway
 internal/auth, users, tokens, access   login, OIDC, permissions
-internal/migrate      one-time import of the CRD based state of 0.10
 charts/devenv         Helm chart
 web                   React console (embedded with go:embed)
 images                environment images

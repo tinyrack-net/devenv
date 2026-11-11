@@ -42,7 +42,7 @@ extraClasses:
       multus:
         networkAttachment: devenv/lan-dhcp   # namespace/name or name
         interface: net1                      # default
-        stableMAC: true                      # fixed MAC per environment (kept in the database)
+        stableMAC: true                      # MAC derived from the environment name
 ```
 
 The IP reported by Multus (`k8s.v1.cni.cncf.io/network-status`) is shown in

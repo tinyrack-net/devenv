@@ -10,11 +10,7 @@
 {{- if and (eq .Values.auth.mode "password") .Values.auth.passwordLogin }}
 {{- $_ := set $password "passwordFile" "/etc/devenv/secrets/admin/password" }}
 {{- end }}
-{{- $mcp := dict "enabled" .Values.mcp.enabled "legacyToken" (dict "enabled" .Values.mcp.legacyToken) }}
-{{- with .Values.mcp.legacyTokenUser }}{{ $_ := set $mcp.legacyToken "user" . }}{{ end }}
-{{- if .Values.mcp.existingSecret }}
-{{- $_ := set $mcp.legacyToken "tokenFile" "/etc/devenv/secrets/mcp/token" }}
-{{- end }}
+{{- $mcp := dict "enabled" .Values.mcp.enabled }}
 {{- $users := dict "defaultLimits" (.Values.users.defaultLimits | default dict) }}
 {{- with .Values.users.adminLimits }}{{ $_ := set $users "adminLimits" . }}{{ end }}
 {{- $classes := dict }}
@@ -54,8 +50,12 @@
 {{- else }}
 {{- fail "database.driver must be sqlite or postgres" }}
 {{- end }}
+{{- $sshPort := .Values.sshService.publicPort | default (ternary .Values.sshService.nodePort .Values.sshService.port (and (eq .Values.sshService.type "NodePort") (not (empty .Values.sshService.nodePort)))) }}
+{{- $ssh := dict "publicPort" (int $sshPort) }}
+{{- with .Values.sshService.publicHost }}{{ $_ := set $ssh "publicHost" . }}{{ end }}
 {{- $cfg := dict
   "server" (dict "externalURL" .Values.externalURL)
+  "ssh" $ssh
   "database" $db
   "classes" $classes
   "images" $images

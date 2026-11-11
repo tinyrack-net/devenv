@@ -64,12 +64,6 @@ spec:
               value: ":8080"
             - name: DEVENV_SSH_ADDR
               value: {{ if .Values.sshService.enabled }}":2222"{{ else }}""{{ end }}
-            - name: DEVENV_SSH_PUBLIC_HOST
-              value: {{ .Values.sshService.publicHost | quote }}
-            - name: DEVENV_SSH_PUBLIC_PORT
-              value: {{ .Values.sshService.publicPort | default (ternary .Values.sshService.nodePort .Values.sshService.port (and (eq .Values.sshService.type "NodePort") (not (empty .Values.sshService.nodePort)))) | quote }}
-            - name: DEVENV_KEYS_SECRET
-              value: {{ include "devenv.fullname" . }}-keys
             # The server image also carries devenv-agent; environments mount
             # it read-only at /opt/devenv (image volume).
             - name: DEVENV_HELPER_IMAGE
@@ -112,11 +106,6 @@ spec:
               mountPath: /etc/devenv/secrets/admin
               readOnly: true
             {{- end }}
-            {{- if .Values.mcp.existingSecret }}
-            - name: mcp-token
-              mountPath: /etc/devenv/secrets/mcp
-              readOnly: true
-            {{- end }}
             {{- range .Values.auth.oidc }}
             {{- if .existingSecret }}
             - name: oidc-{{ .id }}
@@ -149,12 +138,6 @@ spec:
           secret:
             secretName: {{ include "devenv.authSecretName" . }}
             items: [{key: password, path: password}]
-        {{- end }}
-        {{- with .Values.mcp.existingSecret }}
-        - name: mcp-token
-          secret:
-            secretName: {{ . }}
-            items: [{key: token, path: token}]
         {{- end }}
         {{- range .Values.auth.oidc }}
         {{- if .existingSecret }}

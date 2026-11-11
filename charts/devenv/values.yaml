@@ -185,13 +185,6 @@ helper:
 # own access tokens in the console; tools act with that user's permissions.
 mcp:
   enabled: true
-  # -- Shared legacy token (single-user versions). It acts as legacyTokenUser.
-  # Set false once every agent uses a personal token.
-  legacyToken: true
-  legacyTokenUser: ""
-  # -- Existing Secret with key `token` used as the legacy token. When empty
-  # a token is generated and kept in the database.
-  existingSecret: ""
 
 # -- Set the Secure flag on cookies. Enable when served over HTTPS.
 secureCookies: false

@@ -1,16 +1,12 @@
 {{- $sa := include "devenv.serviceAccountName" . }}
 {{- $fullname := include "devenv.fullname" . }}
-# Cluster wide: read-only capacity inputs, and reading the CRDs of 0.10 and
-# earlier once to import them into the database.
+# Cluster wide: read-only capacity inputs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ $fullname }}
   labels: {{- include "devenv.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["devenv.tinyrack.net"]
-    resources: ["devimages", "devusers", "devenvironmentclasses", "devenvironments"]
-    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
@@ -65,8 +61,7 @@ subjects:
     name: {{ $sa }}
     namespace: {{ .Release.Namespace }}
 ---
-# Release namespace: prepull DaemonSet, leader election, and reading the key
-# and token Secrets of 0.10 and earlier (imported once).
+# Release namespace: prepull DaemonSet and leader election.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -74,9 +69,6 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "devenv.labels" . | nindent 4 }}
 rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

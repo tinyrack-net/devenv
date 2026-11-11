@@ -80,7 +80,6 @@ func newHarness(t *testing.T, objs ...any) *harness {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(base...).Build()
 	sessions, _ := auth.NewSessions([]byte("k"), false)
 	cfg := &config.Config{Auth: config.Auth{Password: config.Password{Password: "pw"}}}
-	cfg.MCP.LegacyToken.Token = "legacy-token"
 	cfg.Classes = map[string]model.ClassSpec{"default": {Limits: model.Limits{MaxCPU: qp("6"), MaxDisk: qp("100Gi")}}}
 	cfg.Images = map[string]model.ImageSpec{
 		"base": {Image: "example.com/base:1", DefaultResources: model.Resources{CPU: qp("2"), Memory: qp("4Gi")}},
@@ -611,12 +610,9 @@ func TestTokens(t *testing.T) {
 	if p, err := h.srv.Token(t.Context(), mcpOnly.Value, "mcp"); err != nil || p.Name != "alice" || p.TokenName != "mcp" {
 		t.Fatalf("mcp token: %+v %v", p, err)
 	}
-	// Legacy MCP token acts as the local admin.
-	if p, err := h.srv.Token(t.Context(), "legacy-token", "mcp"); err != nil || p.Name != "admin" || !p.Admin {
-		t.Fatalf("legacy: %+v %v", p, err)
-	}
-	if _, err := h.srv.Token(t.Context(), "legacy-token", "api"); err == nil {
-		t.Fatal("legacy token accepted for api")
+	// Anything that is not a personal access token is rejected.
+	if _, err := h.srv.Token(t.Context(), "dvm_shared-token", "mcp"); err == nil {
+		t.Fatal("non personal token accepted")
 	}
 	// Disabled users are rejected everywhere.
 	h.do("PATCH", "/api/v1/admin/users/alice", UpdateUserRequest{Disabled: new(true)}, 200, nil)
